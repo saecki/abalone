@@ -1,14 +1,81 @@
-use std::{fmt, error};
-use std::ops::{Add, Deref, DerefMut, Div, Mul, Sub};
-use std::convert::TryFrom;
+use std::{fmt, ops};
+
+#[cfg(test)]
+mod test;
 
 const UNIT_X: Pos = Pos { x: 1, y: 0 };
 const UNIT_Y: Pos = Pos { x: 0, y: 1 };
 const UNIT_Z: Pos = Pos { x: 1, y: 1 };
 
+const SIZE: i8 = 9;
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Success {
+    /// Pushed opposing color, off the board.
+    PushedOff {
+        /// First ball that was pushed.
+        first: Pos,
+        /// Last opposing ball that was pushed off.
+        last: Pos,
+    },
+    /// Pushed opposing color, but not off the board.
+    PushedAway {
+        /// First ball that was pushed.
+        first: Pos,
+        /// Last opposing ball that was away off.
+        last: Pos,
+    },
+    /// Moved without resistance.
+    Moved {
+        /// First ball that was pushed.
+        first: Pos,
+        /// Last ball, of the same color, that was pushed.
+        last: Pos,
+    },
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Error {
+    /// No ball was found ad the position.
+    NotABall(Pos),
+    /// Would push off your own ball.
+    PushedOff(Pos),
+    /// A ball off your own color, is blocking you from pushing away opposing balls.
+    Mixed(Pos),
+    /// More than 3 balls.
+    TooMany {
+        /// First own ball.
+        first: Pos,
+        /// The fourth own ball,
+        fourth: Pos,
+    },
+    /// More or the same amount of opposing balls.
+    TooManyOpposing {
+        /// First opposing ball.
+        first: Pos,
+        /// Last opposing ball.
+        last: Pos,
+    },
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct Game {
-    pub balls: Vec<Ball>,
+    pub balls: [[Option<Color>; SIZE as usize]; SIZE as usize],
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Color {
+    Black,
+    White,
+}
+
+impl Color {
+    fn opposite(&self) -> Self {
+        match self {
+            Self::Black => Self::White,
+            Self::White => Self::Black,
+        }
+    }
 }
 
 /// Coordinates representing the position of a ball in the following coordinate
@@ -26,60 +93,50 @@ pub struct Game {
 ///  7 / . . . * * * * * *
 /// 8 / . . . . * * * * *
 ///  y
-#[derive(Clone, Debug, PartialEq)]
-pub struct Ball {
-    pub color: Color,
-    pub pos: Pos,
-}
-
-#[derive(Clone, Debug, PartialEq)]
-pub enum Color {
-    Black,
-    White,
-}
-
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Pos {
-    pub x: i32,
-    pub y: i32,
+    pub x: i8,
+    pub y: i8,
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Dir {
-    X,
-    Y,
-    Z,
-}
-
-#[derive(Clone, Debug, PartialEq)]
-pub enum Mag {
-    Pos,
-    Neg,
-}
-
-impl Mag {
-    pub fn to_i32(&self) -> i32 {
-        match self {
-            Mag::Pos => 1,
-            Mag::Neg => -1,
-        }
-    }
+    PosX,
+    PosY,
+    PosZ,
+    NegX,
+    NegY,
+    NegZ,
 }
 
 impl Dir {
-    pub fn to_pos(&self) -> Pos {
+    pub fn vec(&self) -> Pos {
         match self {
-            Self::X => UNIT_X,
-            Self::Y => UNIT_Y,
-            Self::Z => UNIT_Z,
+            Self::PosX => UNIT_X,
+            Self::PosY => UNIT_Y,
+            Self::PosZ => UNIT_Z,
+            Self::NegX => -UNIT_X,
+            Self::NegY => -UNIT_Y,
+            Self::NegZ => -UNIT_Z,
         }
     }
 }
 
-impl<'a, 'b> Add<&'b Pos> for &'a Pos {
+impl<'a, 'b> ops::Neg for Pos {
     type Output = Pos;
 
-    fn add(self, rhs: &'b Pos) -> Self::Output {
+    fn neg(self) -> Self::Output {
+        Self::Output {
+            x: -self.x,
+            y: -self.y,
+        }
+    }
+}
+
+impl<'a, 'b> ops::Add<Pos> for Pos {
+    type Output = Pos;
+
+    fn add(self, rhs: Pos) -> Self::Output {
         Self::Output {
             x: self.x + rhs.x,
             y: self.y + rhs.y,
@@ -87,10 +144,10 @@ impl<'a, 'b> Add<&'b Pos> for &'a Pos {
     }
 }
 
-impl<'a, 'b> Sub<&'b Pos> for &'a Pos {
+impl<'a, 'b> ops::Sub<Pos> for Pos {
     type Output = Pos;
 
-    fn sub(self, rhs: &'b Pos) -> Self::Output {
+    fn sub(self, rhs: Pos) -> Self::Output {
         Self::Output {
             x: self.x - rhs.x,
             y: self.y - rhs.y,
@@ -98,10 +155,10 @@ impl<'a, 'b> Sub<&'b Pos> for &'a Pos {
     }
 }
 
-impl<'a> Mul<i32> for &'a Pos {
+impl<'a> ops::Mul<i8> for Pos {
     type Output = Pos;
 
-    fn mul(self, rhs: i32) -> Self::Output {
+    fn mul(self, rhs: i8) -> Self::Output {
         Self::Output {
             x: self.x * rhs,
             y: self.y * rhs,
@@ -109,88 +166,9 @@ impl<'a> Mul<i32> for &'a Pos {
     }
 }
 
-impl<'a> Div<i32> for &'a Pos {
-    type Output = Pos;
-
-    fn div(self, rhs: i32) -> Self::Output {
-        Self::Output {
-            x: self.x * rhs,
-            y: self.y * rhs,
-        }
-    }
-}
-
-impl Pos {
-    pub fn push(&mut self, distance: i32, dir: &Dir) {
-        match dir {
-            Dir::X => self.x += distance,
-            Dir::Y => self.y += distance,
-            Dir::Z => {
-                self.x += distance;
-                self.y += distance;
-            }
-        }
-    }
-
-    pub fn pushed(&self, distance: i32, dir: &Dir) -> Self {
-        match dir {
-            Dir::X => Self {
-                x: self.x + distance,
-                y: self.y,
-            },
-            Dir::Y => Self {
-                x: self.x,
-                y: self.y + distance,
-            },
-            Dir::Z => Self {
-                x: self.x + distance,
-                y: self.y + distance,
-            },
-        }
-    }
-
-    pub fn abs(&self) -> Self {
-        Self {
-            x: self.x.abs(),
-            y: self.y.abs(),
-        }
-    }
-}
-
-impl Deref for Ball {
-    type Target = Pos;
-
-    fn deref(&self) -> &Pos {
-        &self.pos
-    }
-}
-
-impl DerefMut for Ball {
-    fn deref_mut(&mut self) -> &mut Pos {
-        &mut self.pos
-    }
-}
-
-impl Ball {
-    pub fn new(color: Color, x: i32, y: i32) -> Self {
-        Ball {
-            color,
-            pos: Pos { x, y },
-        }
-    }
-
-    pub fn black(x: i32, y: i32) -> Self {
-        Ball {
-            color: Color::Black,
-            pos: Pos { x, y },
-        }
-    }
-
-    pub fn white(x: i32, y: i32) -> Self {
-        Ball {
-            color: Color::White,
-            pos: Pos { x, y },
-        }
+impl From<(i8, i8)> for Pos {
+    fn from((x, y): (i8, i8)) -> Self {
+        Self { x, y }
     }
 }
 
@@ -199,6 +177,22 @@ impl fmt::Display for Game {
         let buf = String::new();
 
         f.write_str(&buf)
+    }
+}
+
+impl<P: Into<Pos>> ops::Index<P> for Game {
+    type Output = Option<Color>;
+
+    fn index(&self, index: P) -> &Self::Output {
+        let Pos { x, y } = index.into();
+        &self.balls[y as usize][x as usize]
+    }
+}
+
+impl<P: Into<Pos>> ops::IndexMut<P> for Game {
+    fn index_mut(&mut self, index: P) -> &mut Self::Output {
+        let Pos { x, y } = index.into();
+        &mut self.balls[y as usize][x as usize]
     }
 }
 
@@ -218,88 +212,109 @@ impl Game {
     /// 8 / . . . . w w w w w
     ///  y
     pub fn new() -> Self {
-        let mut balls = Vec::new();
+        let mut game = Self {
+            balls: [[None; SIZE as usize]; SIZE as usize],
+        };
 
         for i in 0..5 {
-            balls.push(Ball::black(i, 0));
+            game[(i, 0)] = Some(Color::Black);
         }
         for i in 0..6 {
-            balls.push(Ball::black(i, 1));
+            game[(i, 1)] = Some(Color::Black);
         }
         for i in 2..5 {
-            balls.push(Ball::black(i, 2));
+            game[(i, 2)] = Some(Color::Black);
         }
 
         for i in 0..5 {
-            balls.push(Ball::white(i, 8));
+            game[(i, 8)] = Some(Color::White);
         }
         for i in 0..6 {
-            balls.push(Ball::white(i, 7));
+            game[(i, 7)] = Some(Color::White);
         }
         for i in 4..7 {
-            balls.push(Ball::white(i, 6));
+            game[(i, 6)] = Some(Color::White);
         }
 
-        Game { balls }
+        game
     }
 
-    pub fn ball(&self, pos: &Pos) -> Option<&Ball> {
-        self.balls.iter().find(|b| &b.pos == pos)
+    pub fn get(&self, pos: impl Into<Pos>) -> Option<&Option<Color>> {
+        let pos = pos.into();
+        if !is_in_bounds(pos) {
+            return None;
+        }
+
+        Some(&self[pos])
     }
 
-    pub fn is_pushable(&self, ball: &Ball, mag: Mag, dir: &Dir) -> bool {
+    pub fn get_mut(&mut self, pos: impl Into<Pos>) -> Option<&mut Option<Color>> {
+        let pos = pos.into();
+        if !is_in_bounds(pos) {
+            return None;
+        }
+
+        Some(&mut self[pos])
+    }
+
+    pub fn push(&self, first: Pos, dir: Dir) -> Result<Success, Error> {
         let mut force = 1;
-        let mut counterforce = 0;
 
-        while let Some(b) = self.ball(&ball.pos.pushed(force * mag.to_i32(), dir)) {
-            if b.color == ball.color {
-                force += 1;
+        let Some(Some(color)) = self.get(first) else {
+            return Err(Error::NotABall(first));
+        };
+
+        let opposing_first = loop {
+            let p = first + dir.vec() * force;
+            if let Some(c) = self.get(p) {
+                if let Some(c) = c {
+                    if c != color {
+                        break p;
+                    }
+                    if force >= 4 {
+                        return Err(Error::TooMany { first, fourth: p });
+                    }
+                    force += 1;
+                } else {
+                    let last = first + dir.vec() * (force - 1);
+                    return Ok(Success::Moved { first, last });
+                }
             } else {
-                break;
+                return Err(Error::PushedOff(p));
             }
-        }
+        };
 
-        if force > 3 {
-            return false;
-        }
-
-        let mut dist = (force + counterforce + 1) * mag.to_i32();
-        while let Some(b) = self.ball(&ball.pos.pushed(dist, dir)) {
-            if b.color != ball.color {
-                counterforce += 1;
-                dist += 1;
+        let opposing_color = color.opposite();
+        let mut opposing_force = 1;
+        loop {
+            let p = opposing_first + dir.vec() * opposing_force;
+            if let Some(&c) = self.get(p) {
+                if let Some(c) = c {
+                    if c != opposing_color {
+                        return Err(Error::Mixed(p));
+                    }
+                    if opposing_force >= force {
+                        return Err(Error::TooManyOpposing {
+                            first: opposing_first,
+                            last: p,
+                        });
+                    }
+                    opposing_force += 1;
+                } else {
+                    let last = opposing_first + dir.vec() * (force - 1);
+                    return Ok(Success::PushedAway { first, last });
+                }
             } else {
-                return false;
+                let last = opposing_first + dir.vec() * (force - 1);
+                return Ok(Success::PushedOff { first, last });
             }
         }
-
-        force > counterforce
     }
+}
 
-    pub fn are_pushable(&self, balls: Vec<&Ball>, mag: Mag, dir: &Dir) -> bool {
-        if balls.len() > 3 || balls.len() < 1 {
-            return false;
-        }
-
-        if balls.len() == 3 {
-            let dir1 = &balls[0].pos - &balls[1].pos;
-            let dir2 = &balls[1].pos - &balls[2].pos;
-
-            if dir1 != dir2 {
-                return false;
-            }
-        }
-
-
-
-        for b in balls {
-            if let Some(_) = self.ball(&b.pos.pushed(mag.to_i32(), dir)) {
-                return false;
-            }
-        }
-
-        true
-    }
+fn is_in_bounds(pos: impl Into<Pos>) -> bool {
+    let Pos { x, y } = pos.into();
+    x >= 0 && x < SIZE && y >= 0 && y < SIZE && x - y < 5 && y - x < 5
 }
 
 fn main() {
