@@ -1,11 +1,11 @@
-use crate::{Dir, Error, Game, Pos2, Success};
+use crate::{Dir, Error, Abalone, Pos2, Success};
 
 struct CheckState {
-    game: Game,
+    game: Abalone,
 }
 
 fn start() -> CheckState {
-    CheckState { game: Game::new() }
+    CheckState { game: Abalone::new() }
 }
 
 impl CheckState {

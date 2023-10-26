@@ -229,7 +229,7 @@ impl Dir {
     }
 }
 
-impl fmt::Display for Game {
+impl fmt::Display for Abalone {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         for y in 0..SIZE {
             for _ in 0..(SIZE - y) {
@@ -249,7 +249,7 @@ impl fmt::Display for Game {
     }
 }
 
-impl<P: Into<Pos2>> ops::Index<P> for Game {
+impl<P: Into<Pos2>> ops::Index<P> for Abalone {
     type Output = Option<Color>;
 
     fn index(&self, index: P) -> &Self::Output {
@@ -258,7 +258,7 @@ impl<P: Into<Pos2>> ops::Index<P> for Game {
     }
 }
 
-impl<P: Into<Pos2>> ops::IndexMut<P> for Game {
+impl<P: Into<Pos2>> ops::IndexMut<P> for Abalone {
     fn index_mut(&mut self, index: P) -> &mut Self::Output {
         let Pos2 { x, y } = index.into();
         &mut self.balls[y as usize][x as usize]
@@ -266,11 +266,11 @@ impl<P: Into<Pos2>> ops::IndexMut<P> for Game {
 }
 
 #[derive(Clone, Debug, PartialEq)]
-pub struct Game {
+pub struct Abalone {
     pub balls: [[Option<Color>; SIZE as usize]; SIZE as usize],
 }
 
-impl Game {
+impl Abalone {
     /// Returns a new game with the default start position as shown below:
     ///
     ///               0 1 2 3 4 5 6 7 8
@@ -329,6 +329,15 @@ impl Game {
         }
 
         Some(&mut self[pos])
+    }
+
+    pub fn iter(&self) -> impl Iterator<Item = (i8, i8, Option<Color>)> + '_ {
+        (0..SIZE * SIZE).filter_map(move |i| {
+            let y = i / SIZE;
+            let x = i % SIZE;
+            let val = *self.get((x, y))?;
+            Some((x, y, val))
+        })
     }
 
     pub fn check_move(&self, mut first: Pos2, mut last: Pos2, dir: Dir) -> Result<Success, Error> {
@@ -509,4 +518,3 @@ fn is_in_bounds(pos: impl Into<Pos2>) -> bool {
     let Pos2 { x, y } = pos.into();
     x >= 0 && x < SIZE && y >= 0 && y < SIZE && x - y < 5 && y - x < 5
 }
-
