@@ -47,7 +47,7 @@ pub enum Error {
     NotABall(Pos2),
     /// Would push off your own ball.
     PushedOff(Pos2),
-    /// A ball off your own color, is blocking you from pushing away opposing balls.
+    /// A ball off your own color, is blocking you.
     BlockedByOwn(Pos2),
     /// More than 3 balls.
     TooMany {
@@ -85,7 +85,7 @@ impl Color {
 /// Coordinates representing the position of a ball in the following coordinate
 /// system where ```*``` represents all possible positions.
 ///
-///              0 1 2 3 4 5 6 7 8
+///               0 1 2 3 4 5 6 7 8
 ///            #------------------ x
 ///         0 / * * * * * . . . .
 ///        1 / * * * * * * . . .

@@ -9,7 +9,7 @@ fn start() -> CheckState {
 }
 
 impl CheckState {
-    fn assert_move(
+    fn check_move(
         mut self,
         first: impl Into<Pos2>,
         last: impl Into<Pos2>,
@@ -24,11 +24,20 @@ impl CheckState {
         assert_eq!(res, expected, "\n{}", self.game);
         self
     }
+    fn assert_move(mut self, first: impl Into<Pos2>, last: impl Into<Pos2>, dir: Dir) -> Self {
+        let res = self.game.check_move(first.into(), last.into(), dir);
+        if let Ok(s) = &res {
+            println!("{}", self.game);
+            self.game.apply_move(s);
+        }
+        assert_eq!(res.err(), None, "\n{}", self.game);
+        self
+    }
 }
 
 #[test]
 fn smooth_operator() {
-    start().assert_move(
+    start().check_move(
         (0, 0),
         (2, 2),
         Dir::PosZ,
@@ -43,37 +52,10 @@ fn smooth_operator() {
 #[test]
 fn too_many_opposing() {
     start()
-        .assert_move(
-            (0, 0),
-            (2, 2),
-            Dir::PosZ,
-            Ok(Success::Moved {
-                dir: Dir::PosZ,
-                first: (0, 0).into(),
-                last: (2, 2).into(),
-            }),
-        )
-        .assert_move(
-            (1, 1),
-            (3, 3),
-            Dir::PosZ,
-            Ok(Success::Moved {
-                dir: Dir::PosZ,
-                first: (1, 1).into(),
-                last: (3, 3).into(),
-            }),
-        )
-        .assert_move(
-            (2, 2),
-            (5, 5),
-            Dir::PosZ,
-            Ok(Success::Moved {
-                dir: Dir::PosZ,
-                first: (2, 2).into(),
-                last: (4, 4).into(),
-            }),
-        )
-        .assert_move(
+        .assert_move((0, 0), (2, 2), Dir::PosZ)
+        .assert_move((1, 1), (3, 3), Dir::PosZ)
+        .assert_move((2, 2), (5, 5), Dir::PosZ)
+        .check_move(
             (3, 3),
             (6, 6),
             Dir::PosZ,
@@ -85,8 +67,8 @@ fn too_many_opposing() {
 }
 
 #[test]
-fn sideward() {
-    start().assert_move(
+fn sideward_move() {
+    start().check_move(
         (2, 2),
         (4, 2),
         Dir::PosY,
@@ -96,4 +78,28 @@ fn sideward() {
             last: (4, 2).into(),
         }),
     );
+}
+
+#[test]
+fn sideward_blocked_by_own() {
+    start().check_move(
+        (2, 2),
+        (4, 2),
+        Dir::NegY,
+        Err(Error::BlockedByOwn((2, 1).into())),
+    );
+}
+
+#[test]
+fn sideward_not_free() {
+    start()
+        .assert_move((2, 2), (4, 2), Dir::PosZ)
+        .assert_move((3, 3), (5, 3), Dir::PosY)
+        .assert_move((3, 4), (5, 4), Dir::PosZ)
+        .check_move(
+            (4, 5),
+            (6, 5),
+            Dir::PosY,
+            Err(Error::NotFree((4, 6).into())),
+        );
 }
