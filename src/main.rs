@@ -27,6 +27,7 @@ pub enum Success {
     },
     /// Moved without resistance.
     Moved {
+        dir: Dir,
         /// First ball that was pushed.
         first: Pos2,
         /// Last ball, of the same color, that was pushed.
@@ -36,18 +37,24 @@ pub enum Success {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Error {
+    /// The first and last balls span an invalid set of balls, e.g. the vector
+    /// last - first isn't a multiple of a unit vector (X, Y, Z).
+    InvalidSet,
+    /// The first and last balls span a mixed colored set of balls.
+    /// the position is the color of the first offending ball.
+    MixedSet(Pos2),
     /// No ball was found ad the position.
     NotABall(Pos2),
     /// Would push off your own ball.
     PushedOff(Pos2),
     /// A ball off your own color, is blocking you from pushing away opposing balls.
-    Mixed(Pos2),
+    BlockedByOwn(Pos2),
     /// More than 3 balls.
     TooMany {
         /// First own ball.
         first: Pos2,
-        /// The fourth own ball,
-        fourth: Pos2,
+        /// The last own ball,
+        last: Pos2,
     },
     /// More or the same amount of opposing balls.
     TooManyOpposing {
@@ -56,6 +63,8 @@ pub enum Error {
         /// Last opposing ball.
         last: Pos2,
     },
+    /// Field isn't free, only for sideward motion.
+    NotFree(Pos2),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -162,6 +171,11 @@ impl<'a> ops::Mul<i8> for Vec2 {
 }
 
 impl Vec2 {
+    pub const ZERO: Self = Self { x: 0, y: 0 };
+
+    /// Magnitude of the vector.
+    ///
+    /// NOTE: diagonals in the Z direction are also counted as length 1.
     fn mag(&self) -> i8 {
         if self.x.signum() == self.y.signum() {
             self.x.abs().max(self.y.abs())
@@ -170,11 +184,22 @@ impl Vec2 {
         }
     }
 
+    fn abs(&self) -> Self {
+        Self {
+            x: self.x.abs(),
+            y: self.y.abs(),
+        }
+    }
+
     fn norm(&self) -> Self {
         Self {
             x: self.x.signum(),
             y: self.y.signum(),
         }
+    }
+
+    fn is_unit_vec(&self) -> bool {
+        self.abs() == UNIT_X || self.abs() == UNIT_Y || *self == UNIT_Z || *self == -UNIT_Z
     }
 }
 
@@ -303,61 +328,124 @@ impl Game {
         Some(&mut self[pos])
     }
 
-    pub fn can_push(&self, first: Pos2, dir: Dir) -> Result<Success, Error> {
-        let mut force = 1;
+    pub fn check_move(&self, mut first: Pos2, mut last: Pos2, dir: Dir) -> Result<Success, Error> {
+        let mut vec = last - first;
+        let norm = if vec != Vec2::ZERO {
+            let mut norm = vec.norm();
+            if !norm.is_unit_vec() {
+                return Err(Error::InvalidSet);
+            }
 
-        let Some(Some(color)) = self.get(first) else {
+            // flip things if pushing in reverse direction
+            if -norm == dir.vec() {
+                (first, last) = (last, first);
+                vec = -vec;
+                norm = -norm
+            }
+
+            norm
+        } else {
+            dir.vec()
+        };
+
+        let Some(&Some(color)) = self.get(first) else {
             return Err(Error::NotABall(first));
         };
 
-        let opposing_first = loop {
-            let p = first + dir.vec() * force;
-            if let Some(c) = self.get(p) {
-                if let Some(c) = c {
-                    if c != color {
+        if norm == dir.vec() {
+            // forward motion
+            let mut force = 1;
+            let opposing_first = loop {
+                let p = first + dir.vec() * force;
+                match self.get(p) {
+                    Some(&Some(c)) if c != color => {
+                        if force < vec.mag() {
+                            return Err(Error::MixedSet(p));
+                        }
+
                         break p;
                     }
-                    if force >= 3 {
-                        return Err(Error::TooMany { first, fourth: p });
+                    Some(Some(_)) => {
+                        if force >= 3 {
+                            return Err(Error::TooMany { first, last });
+                        }
+                        force += 1;
                     }
-                    force += 1;
-                } else {
-                    let last = first + dir.vec() * (force - 1);
-                    return Ok(Success::Moved { first, last });
+                    Some(None) => {
+                        let last = first + dir.vec() * (force - 1);
+                        return Ok(Success::Moved { dir, first, last });
+                    }
+                    None => {
+                        return Err(Error::PushedOff(p));
+                    }
                 }
-            } else {
-                return Err(Error::PushedOff(p));
-            }
-        };
+            };
 
-        let opposing_color = color.opposite();
-        let mut opposing_force = 1;
-        loop {
-            let p = opposing_first + dir.vec() * opposing_force;
-            if let Some(&c) = self.get(p) {
-                if let Some(c) = c {
-                    if c != opposing_color {
-                        return Err(Error::Mixed(p));
+            let opposing_color = color.opposite();
+            let mut opposing_force = 1;
+            loop {
+                let p = opposing_first + dir.vec() * opposing_force;
+                match self.get(p) {
+                    Some(&Some(c)) => {
+                        if c != opposing_color {
+                            return Err(Error::BlockedByOwn(p));
+                        }
+                        if opposing_force >= force - 1 {
+                            return Err(Error::TooManyOpposing {
+                                first: opposing_first,
+                                last: p,
+                            });
+                        }
+                        opposing_force += 1;
                     }
-                    if opposing_force >= force - 1 {
-                        return Err(Error::TooManyOpposing {
-                            first: opposing_first,
-                            last: p,
-                        });
+                    Some(None) => {
+                        let last = opposing_first + dir.vec() * (force - 1);
+                        return Ok(Success::PushedAway { first, last });
                     }
-                    opposing_force += 1;
-                } else {
-                    let last = opposing_first + dir.vec() * (force - 1);
-                    return Ok(Success::PushedAway { first, last });
+                    None => {
+                        let last = opposing_first + dir.vec() * (force - 1);
+                        return Ok(Success::PushedOff { first, last });
+                    }
                 }
-            } else {
-                let last = opposing_first + dir.vec() * (force - 1);
-                return Ok(Success::PushedOff { first, last });
             }
+        } else {
+            // sideward motion
+            let mag = vec.mag();
+            if mag > 3 {
+                return Err(Error::TooMany { first, last });
+            }
+            for i in 1..mag {
+                let p = first + norm * i;
+                match self.get(p) {
+                    Some(&Some(c)) if c != color => {
+                        return Err(Error::MixedSet(p));
+                    }
+                    Some(Some(_)) => (),
+                    _ => return Err(Error::NotABall(p)),
+                }
+            }
+
+            for i in 0..mag {
+                let current_pos = first + norm * i;
+                let new_pos = current_pos + dir.vec();
+                match self.get(new_pos) {
+                    Some(&Some(c)) => {
+                        if c == color {
+                            return Err(Error::BlockedByOwn(new_pos));
+                        } else {
+                            return Err(Error::NotFree(new_pos));
+                        }
+                    }
+                    Some(None) => (),
+                    None => return Err(Error::PushedOff(current_pos)),
+                }
+            }
+
+            Ok(Success::Moved { dir, first, last })
         }
     }
 
-    pub fn apply(&mut self, success: &Success) {
+    pub fn apply_move(&mut self, success: &Success) {
         match success {
             &Success::PushedOff { first, last } => {
                 let vec = last - first;
@@ -371,7 +459,7 @@ impl Game {
                 }
                 self[first] = None;
             }
-            &Success::PushedAway { first, last } | &Success::Moved { first, last } => {
+            &Success::PushedAway { first, last } => {
                 let vec = last - first;
                 let num = vec.mag();
                 let norm = vec.norm();
@@ -382,6 +470,18 @@ impl Game {
                     self[new] = self[pos];
                 }
                 self[first] = None;
+            }
+            &Success::Moved { dir, first, last } => {
+                let vec = last - first;
+                let num = vec.mag();
+                let norm = vec.norm();
+
+                for i in (0..=num).rev() {
+                    let pos = first + norm * i;
+                    let new = pos + dir.vec();
+                    self[new] = self[pos];
+                    self[pos] = None;
+                }
             }
         }
     }
