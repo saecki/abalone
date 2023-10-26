@@ -163,7 +163,11 @@ impl<'a> ops::Mul<i8> for Vec2 {
 
 impl Vec2 {
     fn mag(&self) -> i8 {
-        self.x.max(self.y)
+        if self.x.signum() == self.y.signum() {
+            self.x.abs().max(self.y.abs())
+        } else {
+            self.x.abs() + self.y.abs()
+        }
     }
 
     fn norm(&self) -> Self {
@@ -313,7 +317,7 @@ impl Game {
                     if c != color {
                         break p;
                     }
-                    if force >= 4 {
+                    if force >= 3 {
                         return Err(Error::TooMany { first, fourth: p });
                     }
                     force += 1;
@@ -335,7 +339,7 @@ impl Game {
                     if c != opposing_color {
                         return Err(Error::Mixed(p));
                     }
-                    if opposing_force >= force {
+                    if opposing_force >= force - 1 {
                         return Err(Error::TooManyOpposing {
                             first: opposing_first,
                             last: p,
@@ -357,7 +361,7 @@ impl Game {
         match success {
             &Success::PushedOff { first, last } => {
                 let vec = last - first;
-                let num = vec.mag() - 1;
+                let num = vec.mag();
                 let norm = vec.norm();
 
                 for i in (0..num).rev() {
@@ -372,7 +376,7 @@ impl Game {
                 let num = vec.mag();
                 let norm = vec.norm();
 
-                for i in (0..num).rev() {
+                for i in (0..=num).rev() {
                     let pos = first + norm * i;
                     let new = pos + norm;
                     self[new] = self[pos];

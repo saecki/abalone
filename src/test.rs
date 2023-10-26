@@ -17,6 +17,7 @@ impl CheckState {
     ) -> Self {
         let res = self.game.can_push(first.into(), dir);
         if let Ok(s) = &res {
+            println!("{}", self.game);
             self.game.apply(s);
         }
         assert_eq!(res, expected, "\n{}", self.game);
