@@ -54,10 +54,10 @@ fn too_many_opposing() {
     start()
         .assert_move((0, 0), (2, 2), Dir::PosZ)
         .assert_move((1, 1), (3, 3), Dir::PosZ)
-        .assert_move((2, 2), (5, 5), Dir::PosZ)
+        .assert_move((2, 2), (4, 4), Dir::PosZ)
         .check_move(
             (3, 3),
-            (6, 6),
+            (5, 5),
             Dir::PosZ,
             Err(Error::TooManyOpposing {
                 first: (6, 6).into(),
@@ -86,7 +86,9 @@ fn sideward_blocked_by_own() {
         (2, 2),
         (4, 2),
         Dir::NegY,
-        Err(Error::BlockedByOwn((2, 1).into())),
+        Err(Error::NotFree(
+            [(2, 1).into(), (3, 1).into(), (4, 1).into()].into(),
+        )),
     );
 }
 
@@ -100,6 +102,22 @@ fn sideward_not_free() {
             (4, 5),
             (6, 5),
             Dir::PosY,
-            Err(Error::NotFree((4, 6).into())),
+            Err(Error::NotFree(
+                [(4, 6).into(), (5, 6).into(), (6, 6).into()].into(),
+            )),
+        );
+}
+
+#[test]
+fn mixed_set_forward_motion() {
+    start()
+        .assert_move((0, 0), (2, 2), Dir::PosZ)
+        .assert_move((1, 1), (3, 3), Dir::PosZ)
+        .assert_move((2, 2), (4, 4), Dir::PosZ)
+        .check_move(
+            (5, 5),
+            (7, 7),
+            Dir::PosZ,
+            Err(Error::MixedSet([(6, 6).into(), (7, 7).into()].into())),
         );
 }

@@ -1,5 +1,8 @@
 use std::{fmt, ops};
 
+use crate::stackvec::StackVec;
+
+mod stackvec;
 #[cfg(test)]
 mod test;
 
@@ -42,12 +45,12 @@ pub enum Error {
     InvalidSet,
     /// The first and last balls span a mixed colored set of balls.
     /// the position is the color of the first offending ball.
-    MixedSet(Pos2),
+    MixedSet(StackVec<2, Pos2>),
     /// No ball was found ad the position.
     NotABall(Pos2),
     /// Would push off your own ball.
     PushedOff(Pos2),
-    /// A ball off your own color, is blocking you.
+    /// A ball off your own color, is blocking you from pushing opposing balls.
     BlockedByOwn(Pos2),
     /// More than 3 balls.
     TooMany {
@@ -64,7 +67,7 @@ pub enum Error {
         last: Pos2,
     },
     /// Field isn't free, only for sideward motion.
-    NotFree(Pos2),
+    NotFree(StackVec<3, Pos2>),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -352,18 +355,30 @@ impl Game {
             return Err(Error::NotABall(first));
         };
 
+        let mag = vec.mag();
         if norm == dir.vec() {
+            if mag > 3 {
+                return Err(Error::TooMany { first, last });
+            }
+
             // forward motion
             let mut force = 1;
             let opposing_first = loop {
                 let p = first + dir.vec() * force;
                 match self.get(p) {
                     Some(&Some(c)) if c != color => {
-                        if force < vec.mag() {
-                            return Err(Error::MixedSet(p));
-                        }
+                        if force < mag {
+                            let mut mixed_set = StackVec::new();
+                            mixed_set.push(p);
+                            for i in force + 1..=mag {
+                                let p = first + dir.vec() * i;
+                                mixed_set.push(p);
+                            }
 
-                        break p;
+                            return Err(Error::MixedSet(mixed_set));
+                        } else {
+                            break p;
+                        }
                     }
                     Some(Some(_)) => {
                         if force >= 3 {
@@ -410,35 +425,38 @@ impl Game {
             }
         } else {
             // sideward motion
-            let mag = vec.mag();
             if mag > 3 {
                 return Err(Error::TooMany { first, last });
             }
-            for i in 1..mag {
+            let mut mixed_set = StackVec::new();
+            for i in 1..=mag {
                 let p = first + norm * i;
                 match self.get(p) {
-                    Some(&Some(c)) if c != color => {
-                        return Err(Error::MixedSet(p));
-                    }
+                    Some(&Some(c)) if c != color => mixed_set.push(p),
                     Some(Some(_)) => (),
-                    _ => return Err(Error::NotABall(p)),
+                    Some(None) | None => return Err(Error::NotABall(p)),
                 }
             }
 
-            for i in 0..mag {
+            if !mixed_set.is_empty() {
+                return Err(Error::MixedSet(mixed_set));
+            }
+
+            let mut non_free = StackVec::new();
+            dbg!(mag);
+            for i in 0..=mag {
                 let current_pos = first + norm * i;
                 let new_pos = current_pos + dir.vec();
+                dbg!(i, current_pos, new_pos);
                 match self.get(new_pos) {
-                    Some(&Some(c)) => {
-                        if c == color {
-                            return Err(Error::BlockedByOwn(new_pos));
-                        } else {
-                            return Err(Error::NotFree(new_pos));
-                        }
-                    }
+                    Some(&Some(_)) => non_free.push(new_pos),
                     Some(None) => (),
                     None => return Err(Error::PushedOff(current_pos)),
                 }
+            }
+
+            if !non_free.is_empty() {
+                return Err(Error::NotFree(non_free));
             }
 
             Ok(Success::Moved { dir, first, last })
