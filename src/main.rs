@@ -68,7 +68,7 @@ struct Context {
 impl eframe::App for AbaloneApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         CentralPanel::default()
-            .frame(Frame::none().fill(Color32::from_gray(0x30)))
+            .frame(Frame::none().fill(Color32::from_gray(0x2B)))
             .show(ctx, |ui| {
                 // TODO: fix animation snapping when changing direction while animation is still in progress.
                 let board_angle = PI
@@ -259,12 +259,62 @@ fn check_input(i: &mut InputState, app: &mut AbaloneApp, ctx: &Context) {
         app.board_flipped = !app.board_flipped;
     }
 
-    if i.pointer.secondary_pressed() {
+    if i.pointer.any_click() {
         if let Some(current) = i.pointer.interact_pos() {
             let pos = screen_to_game_pos(&ctx, current);
             if abalone::is_in_bounds(pos) {
-                let error = app.game.check_selection([pos; 2]).err();
-                app.state = State::Selection([pos; 2], error)
+                if i.pointer.secondary_released() {
+                    // always discard selection if secondary click was used
+                    let error = app.game.check_selection([pos; 2]).err();
+                    app.state = State::Selection([pos; 2], error)
+                } else {
+                    match &app.state {
+                        State::NoSelection => {
+                            let error = app.game.check_selection([pos; 2]).err();
+                            app.state = State::Selection([pos; 2], error)
+                        }
+
+                        &State::Selection([start, end], _) => {
+                            let sel_vec = end - start;
+                            if sel_vec == abalone::Vec2::ZERO {
+                                if pos == start {
+                                    app.state = State::NoSelection;
+                                } else {
+                                    let selection = [start, pos];
+                                    let error = app.game.check_selection(selection).err();
+                                    app.state = State::Selection(selection, error);
+                                }
+                            } else {
+                                if pos == start {
+                                    let selection = [start + sel_vec.norm(), end];
+                                    let error = app.game.check_selection(selection).err();
+                                    app.state = State::Selection(selection, error);
+                                } else if pos == end {
+                                    let selection = [start, end - sel_vec.norm()];
+                                    let error = app.game.check_selection(selection).err();
+                                    app.state = State::Selection(selection, error);
+                                } else {
+                                    let start_vec = pos - start;
+                                    let end_vec = pos - end;
+                                    if start_vec.is_multiple_of_unit_vec()
+                                        && start_vec.is_parallel(sel_vec)
+                                    {
+                                        if start_vec.mag() < end_vec.mag() {
+                                            let selection = [pos, end];
+                                            let error = app.game.check_selection(selection).err();
+                                            app.state = State::Selection(selection, error);
+                                        } else {
+                                            let selection = [start, pos];
+                                            let error = app.game.check_selection(selection).err();
+                                            app.state = State::Selection(selection, error);
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        State::Move(_, _) => (),
+                    }
+                }
             } else {
                 app.state = State::NoSelection;
             }
@@ -292,9 +342,11 @@ fn check_input(i: &mut InputState, app: &mut AbaloneApp, ctx: &Context) {
                 }
                 DragKind::Direction => {
                     match &app.state {
-                        // TODO: consider allowing moves of single balls, without
-                        // any selection
-                        State::NoSelection => (),
+                        State::NoSelection => {
+                            // use the start position as selection if there is none
+                            app.state =
+                                try_move(&app.game, [start; 2], [start, end], [origin, current]);
+                        }
                         State::Selection(selection, error) => {
                             if error.is_none() {
                                 app.state = try_move(

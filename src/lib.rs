@@ -115,6 +115,7 @@ impl Color {
 /// Coordinates representing the position of a ball in the following coordinate
 /// system where ```*``` represents all possible positions.
 ///
+/// ```md
 ///               0 1 2 3 4 5 6 7 8
 ///            #------------------ x
 ///         0 / * * * * * . . . .
@@ -127,6 +128,7 @@ impl Color {
 ///  7 / . . . * * * * * *
 /// 8 / . . . . * * * * *
 ///  y
+/// ```
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Pos2 {
     pub x: i8,
@@ -156,7 +158,7 @@ impl<'a, 'b> ops::Sub<Pos2> for Pos2 {
 }
 
 impl<'a, 'b> ops::Sub<Vec2> for Pos2 {
-    type Output = Vec2;
+    type Output = Pos2;
 
     fn sub(self, rhs: Vec2) -> Self::Output {
         Self::Output {
@@ -204,8 +206,18 @@ impl<'a> ops::Mul<i8> for Vec2 {
     }
 }
 
+impl From<(i8, i8)> for Vec2 {
+    fn from((x, y): (i8, i8)) -> Self {
+        Self { x, y }
+    }
+}
+
 impl Vec2 {
     pub const ZERO: Self = Self { x: 0, y: 0 };
+
+    pub fn new(x: i8, y: i8) -> Self {
+        Self { x, y }
+    }
 
     /// Magnitude of the vector.
     ///
@@ -234,6 +246,14 @@ impl Vec2 {
 
     pub fn is_multiple_of_unit_vec(&self) -> bool {
         self.x == 0 || self.y == 0 || self.x == self.y
+    }
+
+    pub fn is_parallel(&self, other: Vec2) -> bool {
+        if *self == Vec2::ZERO || other == Vec2::ZERO {
+            return *self == other;
+        }
+
+        self.x * other.y == self.y * other.x
     }
 
     pub fn unit_vec(&self) -> Option<Dir> {
@@ -317,6 +337,7 @@ pub struct Abalone {
 impl Abalone {
     /// Returns a new game with the default start position as shown below:
     ///
+    /// ```md
     ///               0 1 2 3 4 5 6 7 8
     ///            # - - - - - - - - - x
     ///         0 / b b b b b . . . .
@@ -329,6 +350,7 @@ impl Abalone {
     ///  7 / . . . w w w w w w
     /// 8 / . . . . w w w w w
     ///  y
+    /// ```
     pub fn new() -> Self {
         let mut game = Self {
             balls: [[None; SIZE as usize]; SIZE as usize],

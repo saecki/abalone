@@ -1,4 +1,4 @@
-use crate::{Abalone, Dir, Error, Pos2, Success};
+use crate::{Abalone, Dir, Error, MoveError, Pos2, SelectionError, Success, Vec2};
 
 struct CheckState {
     game: Abalone,
@@ -18,7 +18,7 @@ impl CheckState {
         dir: Dir,
         expected: Result<Success, Error>,
     ) -> Self {
-        let res = self.game.check_move(first.into(), last.into(), dir);
+        let res = self.game.check_move([first.into(), last.into()], dir);
         if let Ok(s) = &res {
             println!("{}", self.game);
             self.game.apply_move(s);
@@ -27,7 +27,7 @@ impl CheckState {
         self
     }
     fn assert_move(mut self, first: impl Into<Pos2>, last: impl Into<Pos2>, dir: Dir) -> Self {
-        let res = self.game.check_move(first.into(), last.into(), dir);
+        let res = self.game.check_move([first.into(), last.into()], dir);
         if let Ok(s) = &res {
             println!("{}", self.game);
             self.game.apply_move(s);
@@ -61,10 +61,10 @@ fn too_many_opposing() {
             (3, 3),
             (5, 5),
             Dir::PosZ,
-            Err(Error::TooManyOpposing {
+            Err(Error::Move(MoveError::TooManyOpposing {
                 first: (6, 6).into(),
                 last: (8, 8).into(),
-            }),
+            })),
         );
 }
 
@@ -88,9 +88,9 @@ fn sideward_blocked_by_own() {
         (2, 2),
         (4, 2),
         Dir::NegY,
-        Err(Error::NotFree(
+        Err(Error::Move(MoveError::NotFree(
             [(2, 1).into(), (3, 1).into(), (4, 1).into()].into(),
-        )),
+        ))),
     );
 }
 
@@ -104,9 +104,9 @@ fn sideward_not_free() {
             (4, 5),
             (6, 5),
             Dir::PosY,
-            Err(Error::NotFree(
+            Err(Error::Move(MoveError::NotFree(
                 [(4, 6).into(), (5, 6).into(), (6, 6).into()].into(),
-            )),
+            ))),
         );
 }
 
@@ -120,6 +120,32 @@ fn mixed_set_forward_motion() {
             (5, 5),
             (7, 7),
             Dir::PosZ,
-            Err(Error::MixedSet([(6, 6).into(), (7, 7).into()].into())),
+            Err(Error::Selection(SelectionError::MixedSet(
+                [(6, 6).into(), (7, 7).into()].into(),
+            ))),
         );
+}
+
+#[test]
+fn parallel() {
+    fn check(a: impl Into<Vec2>, b: impl Into<Vec2>) {
+        let a = a.into();
+        let b = b.into();
+        assert!(a.is_parallel(b), "{:?} and {:?} not parallel", a, b);
+    }
+
+    fn check_not(a: impl Into<Vec2>, b: impl Into<Vec2>) {
+        let a = a.into();
+        let b = b.into();
+        assert!(!a.is_parallel(b), "{:?} and {:?} parallel", a, b);
+    }
+
+    check((3, 2), (6, 4));
+    check((10, 4), (5, 2));
+    check((-4, 2), (8, -4));
+    check((-4, -2), (8, 4));
+    check((0, 0), (0, 0));
+
+    check_not((1, 2), (2, 1));
+    check_not((3, 2), (2, 1));
 }
