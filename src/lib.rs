@@ -6,6 +6,8 @@ pub mod stackvec;
 #[cfg(test)]
 mod test;
 
+pub const NUM_STARTING_BALLS: u8 = 14;
+
 const UNIT_X: Vec2 = Vec2 { x: 1, y: 0 };
 const UNIT_Y: Vec2 = Vec2 { x: 0, y: 1 };
 const UNIT_Z: Vec2 = Vec2 { x: 1, y: 1 };

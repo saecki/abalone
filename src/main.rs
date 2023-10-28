@@ -3,9 +3,12 @@ use std::f32::consts::{FRAC_PI_4, FRAC_PI_6, PI, TAU};
 use abalone::{Abalone, Color, Dir, SelectionError};
 use eframe::NativeOptions;
 use egui::{
-    CentralPanel, Color32, Frame, Id, InputState, Key, Modifiers, Painter, Pos2, Rect, Rounding,
-    Stroke, Ui, Vec2,
+    Align2, CentralPanel, Color32, FontFamily, FontId, Frame, Id, InputState, Key, Modifiers,
+    Painter, Pos2, Rect, Rounding, Stroke, Ui, Vec2,
 };
+
+const BLACK_COLOR: Color32 = Color32::from_gray(0x02);
+const WHITE_COLOR: Color32 = Color32::from_gray(0xD0);
 
 const SELECTION_COLOR: Color32 = Color32::from_rgb(0x40, 0x60, 0xE0);
 const SUCCESS_COLOR: Color32 = Color32::from_rgb(0x40, 0xF0, 0x60);
@@ -56,7 +59,6 @@ enum State {
 }
 
 struct Context {
-    screen_size: Vec2,
     center: Pos2,
     board_size: f32,
     ball_offset: f32,
@@ -83,7 +85,6 @@ impl eframe::App for AbaloneApp {
                 let line_thickness = 0.1 * ball_radius;
                 let selection_radius = ball_radius - 0.5 * line_thickness;
                 let ctx = Context {
-                    screen_size,
                     center,
                     board_size,
                     ball_offset,
@@ -105,15 +106,46 @@ impl eframe::App for AbaloneApp {
 fn draw_game(ui: &mut Ui, app: &AbaloneApp, ctx: &Context) {
     let painter = ui.painter();
 
+    let mut black_score = abalone::NUM_STARTING_BALLS;
+    let mut white_score = abalone::NUM_STARTING_BALLS;
+    for (_, _, c) in app.game.iter() {
+        match c {
+            Some(Color::Black) => white_score -= 1,
+            Some(Color::White) => black_score -= 1,
+            None => (),
+        }
+    }
+
+    let board_rect = Rect::from_center_size(ctx.center, Vec2::splat(ctx.board_size));
+    let padding = 0.2 * ctx.ball_offset;
+    let font = FontId::new(ctx.ball_offset, FontFamily::Proportional);
+    let black_score_pos = board_rect.right_top() + Vec2::new(-padding, padding);
+    painter.text(
+        black_score_pos,
+        Align2::RIGHT_TOP,
+        black_score.to_string(),
+        font.clone(),
+        BLACK_COLOR,
+    );
+
+    let white_score_pos = board_rect.left_top() + Vec2::new(padding, padding);
+    painter.text(
+        white_score_pos,
+        Align2::LEFT_TOP,
+        white_score.to_string(),
+        font,
+        WHITE_COLOR,
+    );
+
     // balls
     for (x, y, val) in app.game.iter() {
         let pos = game_to_screen_pos(&ctx, (x, y).into());
         match val {
             Some(Color::Black) => {
-                painter.circle_filled(pos, ctx.ball_radius, Color32::from_gray(0x02));
+                painter.circle_filled(pos, ctx.ball_radius, BLACK_COLOR);
             }
             Some(Color::White) => {
-                painter.circle_filled(pos, ctx.ball_radius, Color32::from_gray(0xD0));
+                painter.circle_filled(pos, ctx.ball_radius, WHITE_COLOR);
             }
             None => {
                 let stroke = Stroke::new(ctx.line_thickness, Color32::from_gray(0x80));
