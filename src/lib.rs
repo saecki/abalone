@@ -489,11 +489,11 @@ impl Abalone {
                         opposing_force += 1;
                     }
                     Some(None) => {
-                        let last = opposing_first + dir.vec() * (force - 1);
+                        let last = opposing_first + dir.vec() * (opposing_force - 1);
                         return Ok(Success::PushedAway { first, last });
                     }
                     None => {
-                        let last = opposing_first + dir.vec() * (force - 1);
+                        let last = opposing_first + dir.vec() * (opposing_force - 1);
                         return Ok(Success::PushedOff { first, last });
                     }
                 }
