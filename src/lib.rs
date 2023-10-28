@@ -58,6 +58,8 @@ impl From<MoveError> for Error {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum SelectionError {
+    /// It's the other color's turn.
+    WrongTurn(Pos2),
     /// The first and last balls span an invalid set of balls, e.g. the vector
     /// last - first isn't a multiple of a unit vector (X, Y, Z).
     InvalidSet,
@@ -293,6 +295,12 @@ impl Dir {
     }
 }
 
+#[derive(Clone, Debug, PartialEq)]
+pub struct Abalone {
+    pub balls: [[Option<Color>; SIZE as usize]; SIZE as usize],
+    pub turn: Color,
+}
+
 impl fmt::Display for Abalone {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         for y in 0..SIZE {
@@ -329,11 +337,6 @@ impl<P: Into<Pos2>> ops::IndexMut<P> for Abalone {
     }
 }
 
-#[derive(Clone, Debug, PartialEq)]
-pub struct Abalone {
-    pub balls: [[Option<Color>; SIZE as usize]; SIZE as usize],
-}
-
 impl Abalone {
     /// Returns a new game with the default start position as shown below:
     ///
@@ -354,6 +357,7 @@ impl Abalone {
     pub fn new() -> Self {
         let mut game = Self {
             balls: [[None; SIZE as usize]; SIZE as usize],
+            turn: Color::White,
         };
 
         for i in 0..5 {
@@ -406,7 +410,6 @@ impl Abalone {
         })
     }
 
-    // TODO: only allow right color selection, store turn in game state
     pub fn check_selection(&self, selection: [Pos2; 2]) -> Result<(), SelectionError> {
         let dirs = [
             Dir::PosX,
@@ -427,6 +430,13 @@ impl Abalone {
     }
 
     pub fn check_move(&self, [mut first, mut last]: [Pos2; 2], dir: Dir) -> Result<Success, Error> {
+        let Some(&Some(color)) = self.get(first) else {
+            return Err(SelectionError::NotABall(first).into());
+        };
+        if color != self.turn {
+            return Err(SelectionError::WrongTurn(first).into());
+        }
+
         let mut vec = last - first;
         let norm = if vec != Vec2::ZERO {
             let mut norm = vec.norm();
@@ -444,10 +454,6 @@ impl Abalone {
             norm
         } else {
             dir.vec()
-        };
-
-        let Some(&Some(color)) = self.get(first) else {
-            return Err(SelectionError::NotABall(first).into());
         };
 
         let mag = vec.mag();
@@ -594,6 +600,8 @@ impl Abalone {
                 }
             }
         }
+
+        self.turn = self.turn.opposite();
     }
 }
 

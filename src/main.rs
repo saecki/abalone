@@ -1,14 +1,15 @@
 use std::f32::consts::{FRAC_PI_4, FRAC_PI_6, PI, TAU};
 
-use abalone::{Abalone, Color, Dir};
+use abalone::{Abalone, Color, Dir, SelectionError};
 use eframe::NativeOptions;
 use egui::{
-    CentralPanel, Color32, Frame, Id, InputState, Key, Modifiers, Painter, Pos2, Stroke, Vec2,
+    CentralPanel, Color32, Frame, Id, InputState, Key, Modifiers, Painter, Pos2, Rect, Rounding,
+    Stroke, Vec2,
 };
 
 const SELECTION_COLOR: Color32 = Color32::from_rgb(0x40, 0x60, 0xE0);
 const SUCCESS_COLOR: Color32 = Color32::from_rgb(0x40, 0xF0, 0x60);
-const WARN_COLOR: Color32 = Color32::from_rgb(0xE0, 0xE0, 0x40);
+const WARN_COLOR: Color32 = Color32::from_rgb(0xF0, 0xE0, 0x40);
 const ERROR_COLOR: Color32 = Color32::from_rgb(0xE0, 0x60, 0x40);
 
 fn main() {
@@ -50,7 +51,7 @@ enum DragKind {
 #[derive(Debug)]
 enum State {
     NoSelection,
-    Selection([abalone::Pos2; 2], Option<abalone::SelectionError>),
+    Selection([abalone::Pos2; 2], Option<SelectionError>),
     Move([abalone::Pos2; 2], Result<abalone::Success, abalone::Error>),
 }
 
@@ -103,10 +104,10 @@ impl eframe::App for AbaloneApp {
                     let pos = game_to_screen_pos(&ctx, (x, y).into());
                     match val {
                         Some(Color::Black) => {
-                            painter.circle_filled(pos, ball_radius, Color32::BLACK);
+                            painter.circle_filled(pos, ball_radius, Color32::from_gray(0x02));
                         }
                         Some(Color::White) => {
-                            painter.circle_filled(pos, ball_radius, Color32::WHITE);
+                            painter.circle_filled(pos, ball_radius, Color32::from_gray(0xD0));
                         }
                         None => {
                             let stroke = Stroke::new(line_thickness, Color32::from_gray(0x80));
@@ -117,31 +118,42 @@ impl eframe::App for AbaloneApp {
 
                 // highlight current state
                 let error_stroke = Stroke::new(line_thickness, ERROR_COLOR);
-                let success_stroke = Stroke::new(line_thickness, ERROR_COLOR);
                 match &self.state {
                     State::NoSelection => (),
                     State::Selection(selection, error) => match error {
-                        Some(abalone::SelectionError::InvalidSet) => {
+                        &Some(SelectionError::WrongTurn(p)) => {
+                            let pos = game_to_screen_pos(&ctx, p);
+                            painter.circle_stroke(pos, selection_radius, error_stroke);
+                            let rect = Rect::from_center_size(pos, Vec2::splat(0.8 * ball_radius));
+                            painter.rect_filled(
+                                rect,
+                                Rounding::same(0.1 * ball_radius),
+                                ERROR_COLOR,
+                            );
+                        }
+                        Some(SelectionError::InvalidSet) => {
                             let [start, end] = *selection;
                             let pos = game_to_screen_pos(&ctx, start);
                             painter.circle_stroke(pos, selection_radius, error_stroke);
                             let pos = game_to_screen_pos(&ctx, end);
                             painter.circle_stroke(pos, selection_radius, error_stroke);
                         }
-                        Some(abalone::SelectionError::MixedSet(mixed)) => {
+                        Some(SelectionError::MixedSet(mixed)) => {
+                            highlight_selection(painter, &ctx, *selection, SELECTION_COLOR);
                             for &p in mixed.iter() {
                                 let pos = game_to_screen_pos(&ctx, p);
                                 painter.circle_stroke(pos, selection_radius, error_stroke);
                             }
                         }
-                        Some(abalone::SelectionError::NotABall(p)) => {
+                        Some(SelectionError::NotABall(p)) => {
+                            highlight_selection(painter, &ctx, *selection, SELECTION_COLOR);
                             let pos = game_to_screen_pos(&ctx, *p);
                             painter.circle_stroke(pos, selection_radius, error_stroke);
                         }
-                        Some(abalone::SelectionError::TooMany) => {
+                        Some(SelectionError::TooMany) => {
                             highlight_selection(painter, &ctx, *selection, ERROR_COLOR);
                         }
-                        Some(abalone::SelectionError::NoPossibleMove) => {
+                        Some(SelectionError::NoPossibleMove) => {
                             highlight_selection(painter, &ctx, *selection, WARN_COLOR);
                         }
                         None => {
@@ -273,7 +285,6 @@ fn check_input(i: &mut InputState, app: &mut AbaloneApp, ctx: &Context) {
                             let error = app.game.check_selection([pos; 2]).err();
                             app.state = State::Selection([pos; 2], error)
                         }
-
                         &State::Selection([start, end], _) => {
                             let sel_vec = end - start;
                             if sel_vec == abalone::Vec2::ZERO {
@@ -310,6 +321,13 @@ fn check_input(i: &mut InputState, app: &mut AbaloneApp, ctx: &Context) {
                                         }
                                     }
                                 }
+                            }
+
+                            // clear selection only if it's invalid set
+                            if let State::Selection(_, Some(SelectionError::InvalidSet)) =
+                                &app.state
+                            {
+                                app.state = State::NoSelection;
                             }
                         }
                         State::Move(_, _) => (),
@@ -368,14 +386,23 @@ fn check_input(i: &mut InputState, app: &mut AbaloneApp, ctx: &Context) {
             app.drag = Some((kind, origin, current));
         } else {
             // drag released
-            if let State::Move(selection, res) = &app.state {
-                app.state = match res {
-                    Ok(success) => {
-                        app.game.apply_move(success);
-                        State::NoSelection
+            match &app.state {
+                State::NoSelection => (),
+                State::Selection(_, error) => {
+                    // clear invalid selection when drag is released
+                    if error.is_some() {
+                        app.state = State::NoSelection;
                     }
-                    Err(_) => State::Selection(*selection, None),
-                };
+                }
+                State::Move(selection, res) => {
+                    app.state = match res {
+                        Ok(success) => {
+                            app.game.apply_move(success);
+                            State::NoSelection
+                        }
+                        Err(_) => State::Selection(*selection, None),
+                    };
+                }
             }
         }
     } else {
