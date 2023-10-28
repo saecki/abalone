@@ -464,7 +464,8 @@ impl Abalone {
                         return Ok(Success::Moved { dir, first, last });
                     }
                     None => {
-                        return Err(MoveError::PushedOff(p).into());
+                        let last = first + dir.vec() * (force - 1);
+                        return Err(MoveError::PushedOff(last).into());
                     }
                 }
             };
