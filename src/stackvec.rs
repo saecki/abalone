@@ -48,6 +48,14 @@ impl<const SIZE: usize, T: Sized> StackVec<SIZE, T> {
         })
     }
 
+    pub fn clear(&mut self) {
+        for i in 0..self.len {
+            let val = std::mem::replace(&mut self.buf[i as usize], MaybeUninit::uninit());
+            drop(unsafe { val.assume_init() });
+        }
+        self.len = 0;
+    }
+
     pub fn iter(&self) -> impl Iterator<Item = &T> {
         let slice = &self.buf[..self.len as usize];
         let slice: &[T] = unsafe { std::mem::transmute(slice) };
@@ -82,6 +90,12 @@ impl<const SIZE: usize, T: Sized + PartialEq> std::cmp::PartialEq for StackVec<S
         }
 
         true
+    }
+}
+
+impl<const SIZE: usize, T: Sized + PartialEq> StackVec<SIZE, T> {
+    pub fn contains(&self, elem: &T) -> bool {
+        self.iter().any(|e| e == elem)
     }
 }
 

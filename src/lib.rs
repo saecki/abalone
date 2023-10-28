@@ -2,7 +2,7 @@ use std::{fmt, ops};
 
 use crate::stackvec::StackVec;
 
-mod stackvec;
+pub mod stackvec;
 #[cfg(test)]
 mod test;
 
@@ -40,6 +40,24 @@ pub enum Success {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Error {
+    Selection(SelectionError),
+    Move(MoveError),
+}
+
+impl From<SelectionError> for Error {
+    fn from(value: SelectionError) -> Self {
+        Self::Selection(value)
+    }
+}
+
+impl From<MoveError> for Error {
+    fn from(value: MoveError) -> Self {
+        Self::Move(value)
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum SelectionError {
     /// The first and last balls span an invalid set of balls, e.g. the vector
     /// last - first isn't a multiple of a unit vector (X, Y, Z).
     InvalidSet,
@@ -48,15 +66,24 @@ pub enum Error {
     MixedSet(StackVec<2, Pos2>),
     /// No ball was found ad the position.
     NotABall(Pos2),
+    /// More than 3 balls.
+    TooMany,
+    /// No matter what direction, there isn't any valid move.
+    NoPossibleMove,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum MoveError {
     /// Would push off your own ball.
     PushedOff(Pos2),
     /// A ball off your own color, is blocking you from pushing opposing balls.
     BlockedByOwn(Pos2),
-    /// More than 3 balls.
-    TooMany {
-        /// First own ball.
+    /// More than 3 balls of the same color were inferred,
+    /// e.g. in the same direction.
+    TooManyInferred {
+        /// First opposing ball.
         first: Pos2,
-        /// The last own ball,
+        /// Last opposing ball.
         last: Pos2,
     },
     /// More or the same amount of opposing balls.
@@ -145,6 +172,10 @@ impl From<(i8, i8)> for Pos2 {
     }
 }
 
+impl Pos2 {
+    pub const ZERO: Self = Self { x: 0, y: 0 };
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Vec2 {
     pub x: i8,
@@ -179,7 +210,7 @@ impl Vec2 {
     /// Magnitude of the vector.
     ///
     /// NOTE: diagonals in the Z direction are also counted as length 1.
-    fn mag(&self) -> i8 {
+    pub fn mag(&self) -> i8 {
         if self.x.signum() == self.y.signum() {
             self.x.abs().max(self.y.abs())
         } else {
@@ -187,22 +218,35 @@ impl Vec2 {
         }
     }
 
-    fn abs(&self) -> Self {
+    pub fn abs(&self) -> Self {
         Self {
             x: self.x.abs(),
             y: self.y.abs(),
         }
     }
 
-    fn norm(&self) -> Self {
+    pub fn norm(&self) -> Self {
         Self {
             x: self.x.signum(),
             y: self.y.signum(),
         }
     }
 
-    fn is_unit_vec(&self) -> bool {
-        self.abs() == UNIT_X || self.abs() == UNIT_Y || *self == UNIT_Z || *self == -UNIT_Z
+    pub fn is_multiple_of_unit_vec(&self) -> bool {
+        self.x == 0 || self.y == 0 || self.x == self.y
+    }
+
+    pub fn unit_vec(&self) -> Option<Dir> {
+        let dir = match *self {
+            v if v == UNIT_X => Dir::PosX,
+            v if v == -UNIT_X => Dir::NegX,
+            v if v == UNIT_Y => Dir::PosY,
+            v if v == -UNIT_Y => Dir::NegY,
+            v if v == UNIT_Z => Dir::PosZ,
+            v if v == -UNIT_Z => Dir::NegZ,
+            _ => return None,
+        };
+        Some(dir)
     }
 }
 
@@ -340,12 +384,32 @@ impl Abalone {
         })
     }
 
-    pub fn check_move(&self, mut first: Pos2, mut last: Pos2, dir: Dir) -> Result<Success, Error> {
+    // TODO: only allow right color selection, store turn in game state
+    pub fn check_selection(&self, selection: [Pos2; 2]) -> Result<(), SelectionError> {
+        let dirs = [
+            Dir::PosX,
+            Dir::PosY,
+            Dir::PosZ,
+            Dir::NegX,
+            Dir::NegY,
+            Dir::NegZ,
+        ];
+        for dir in dirs {
+            match self.check_move(selection, dir) {
+                Ok(_) => return Ok(()),
+                Err(Error::Selection(e)) => return Err(e),
+                Err(Error::Move(_)) => continue,
+            }
+        }
+        Err(SelectionError::NoPossibleMove)
+    }
+
+    pub fn check_move(&self, [mut first, mut last]: [Pos2; 2], dir: Dir) -> Result<Success, Error> {
         let mut vec = last - first;
         let norm = if vec != Vec2::ZERO {
             let mut norm = vec.norm();
-            if !norm.is_unit_vec() {
-                return Err(Error::InvalidSet);
+            if !vec.is_multiple_of_unit_vec() {
+                return Err(SelectionError::InvalidSet.into());
             }
 
             // flip things if pushing in reverse direction
@@ -361,15 +425,15 @@ impl Abalone {
         };
 
         let Some(&Some(color)) = self.get(first) else {
-            return Err(Error::NotABall(first));
+            return Err(SelectionError::NotABall(first).into());
         };
 
         let mag = vec.mag();
-        if norm == dir.vec() {
-            if mag > 3 {
-                return Err(Error::TooMany { first, last });
-            }
+        if mag >= 3 {
+            return Err(SelectionError::TooMany.into());
+        }
 
+        if norm == dir.vec() {
             // forward motion
             let mut force = 1;
             let opposing_first = loop {
@@ -384,14 +448,14 @@ impl Abalone {
                                 mixed_set.push(p);
                             }
 
-                            return Err(Error::MixedSet(mixed_set));
+                            return Err(SelectionError::MixedSet(mixed_set).into());
                         } else {
                             break p;
                         }
                     }
                     Some(Some(_)) => {
                         if force >= 3 {
-                            return Err(Error::TooMany { first, last });
+                            return Err(MoveError::TooManyInferred { first, last: p }.into());
                         }
                         force += 1;
                     }
@@ -400,7 +464,7 @@ impl Abalone {
                         return Ok(Success::Moved { dir, first, last });
                     }
                     None => {
-                        return Err(Error::PushedOff(p));
+                        return Err(MoveError::PushedOff(p).into());
                     }
                 }
             };
@@ -412,13 +476,14 @@ impl Abalone {
                 match self.get(p) {
                     Some(&Some(c)) => {
                         if c != opposing_color {
-                            return Err(Error::BlockedByOwn(p));
+                            return Err(MoveError::BlockedByOwn(p).into());
                         }
                         if opposing_force >= force - 1 {
-                            return Err(Error::TooManyOpposing {
+                            return Err(MoveError::TooManyOpposing {
                                 first: opposing_first,
                                 last: p,
-                            });
+                            }
+                            .into());
                         }
                         opposing_force += 1;
                     }
@@ -434,38 +499,33 @@ impl Abalone {
             }
         } else {
             // sideward motion
-            if mag > 3 {
-                return Err(Error::TooMany { first, last });
-            }
             let mut mixed_set = StackVec::new();
             for i in 1..=mag {
                 let p = first + norm * i;
                 match self.get(p) {
                     Some(&Some(c)) if c != color => mixed_set.push(p),
                     Some(Some(_)) => (),
-                    Some(None) | None => return Err(Error::NotABall(p)),
+                    Some(None) | None => return Err(SelectionError::NotABall(p).into()),
                 }
             }
 
             if !mixed_set.is_empty() {
-                return Err(Error::MixedSet(mixed_set));
+                return Err(SelectionError::MixedSet(mixed_set).into());
             }
 
             let mut non_free = StackVec::new();
-            dbg!(mag);
             for i in 0..=mag {
                 let current_pos = first + norm * i;
                 let new_pos = current_pos + dir.vec();
-                dbg!(i, current_pos, new_pos);
                 match self.get(new_pos) {
                     Some(&Some(_)) => non_free.push(new_pos),
                     Some(None) => (),
-                    None => return Err(Error::PushedOff(current_pos)),
+                    None => return Err(MoveError::PushedOff(current_pos).into()),
                 }
             }
 
             if !non_free.is_empty() {
-                return Err(Error::NotFree(non_free));
+                return Err(MoveError::NotFree(non_free).into());
             }
 
             Ok(Success::Moved { dir, first, last })
@@ -514,7 +574,7 @@ impl Abalone {
     }
 }
 
-fn is_in_bounds(pos: impl Into<Pos2>) -> bool {
+pub fn is_in_bounds(pos: impl Into<Pos2>) -> bool {
     let Pos2 { x, y } = pos.into();
     x >= 0 && x < SIZE && y >= 0 && y < SIZE && x - y < 5 && y - x < 5
 }
