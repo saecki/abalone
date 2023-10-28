@@ -2,9 +2,12 @@ use std::f32::consts::{FRAC_PI_4, FRAC_PI_6, PI, TAU};
 
 use abalone::{Abalone, Color, Dir};
 use eframe::NativeOptions;
-use egui::{CentralPanel, Color32, Frame, Id, Key, Modifiers, Painter, Pos2, Stroke, Vec2};
+use egui::{
+    CentralPanel, Color32, Frame, Id, InputState, Key, Modifiers, Painter, Pos2, Stroke, Vec2,
+};
 
 const SELECTION_COLOR: Color32 = Color32::from_rgb(0x40, 0x60, 0xE0);
+const SUCCESS_COLOR: Color32 = Color32::from_rgb(0x40, 0xF0, 0x60);
 const WARN_COLOR: Color32 = Color32::from_rgb(0xE0, 0xE0, 0x40);
 const ERROR_COLOR: Color32 = Color32::from_rgb(0xE0, 0x60, 0x40);
 
@@ -90,74 +93,7 @@ impl eframe::App for AbaloneApp {
                 };
 
                 ui.input_mut(|i| {
-                    if i.consume_key(Modifiers::NONE, Key::Space) {
-                        self.board_flipped = !self.board_flipped;
-                    }
-
-                    if i.pointer.secondary_pressed() {
-                        if let Some(current) = i.pointer.interact_pos() {
-                            let pos = screen_to_game_pos(&ctx, current);
-                            if abalone::is_in_bounds(pos) {
-                                let error = self.game.check_selection([pos; 2]).err();
-                                self.state = State::Selection([pos; 2], error)
-                            } else {
-                                self.state = State::NoSelection;
-                            }
-                        }
-                    }
-                    if i.pointer.is_decidedly_dragging() {
-                        if let (Some(origin), Some(current)) =
-                            (i.pointer.press_origin(), i.pointer.interact_pos())
-                        {
-                            let kind = if i.pointer.primary_down() {
-                                DragKind::Direction
-                            } else {
-                                DragKind::Selection
-                            };
-                            let start = screen_to_game_pos(&ctx, origin);
-                            let end = screen_to_game_pos(&ctx, current);
-
-                            match kind {
-                                DragKind::Selection => {
-                                    if abalone::is_in_bounds(start) && abalone::is_in_bounds(end) {
-                                        let error = self.game.check_selection([start, end]).err();
-                                        self.state = State::Selection([start, end], error);
-                                    } else {
-                                        self.state = State::NoSelection;
-                                    }
-                                }
-                                DragKind::Direction => {
-                                    match &self.state {
-                                        // TODO: consider allowing moves of single balls, without
-                                        // any selection
-                                        State::NoSelection => (),
-                                        State::Selection(selection, error) => {
-                                            if error.is_none() {
-                                                self.state = try_move(
-                                                    &self.game,
-                                                    *selection,
-                                                    [start, end],
-                                                    [origin, current],
-                                                );
-                                            }
-                                        }
-                                        State::Move(selection, _) => {
-                                            self.state = try_move(
-                                                &self.game,
-                                                *selection,
-                                                [start, end],
-                                                [origin, current],
-                                            );
-                                        }
-                                    }
-                                }
-                            }
-
-                            self.drag = Some((kind, origin, current));
-                        }
-                    } else {
-                        self.drag = None;
-                    }
+                    check_input(i, self, &ctx);
                 });
 
                 let painter = ui.painter();
@@ -181,6 +117,7 @@ impl eframe::App for AbaloneApp {
 
                 // highlight current state
                 let error_stroke = Stroke::new(line_thickness, ERROR_COLOR);
+                let success_stroke = Stroke::new(line_thickness, ERROR_COLOR);
                 match &self.state {
                     State::NoSelection => (),
                     State::Selection(selection, error) => match error {
@@ -212,18 +149,47 @@ impl eframe::App for AbaloneApp {
                         }
                     },
                     State::Move(selection, res) => {
+                        highlight_selection(painter, &ctx, *selection, SELECTION_COLOR);
                         match res {
                             Err(abalone::Error::Selection(_)) => (),
                             Err(abalone::Error::Move(e)) => match e {
-                                abalone::MoveError::PushedOff(_) => todo!(),
-                                abalone::MoveError::BlockedByOwn(_) => todo!(),
-                                abalone::MoveError::TooManyInferred { first, last } => todo!(),
-                                abalone::MoveError::TooManyOpposing { first, last } => todo!(),
-                                abalone::MoveError::NotFree(_) => todo!(),
+                                &abalone::MoveError::PushedOff(p) => {
+                                    let pos = game_to_screen_pos(&ctx, p);
+                                    painter.circle_stroke(pos, selection_radius, error_stroke);
+                                }
+                                &abalone::MoveError::BlockedByOwn(p) => {
+                                    let pos = game_to_screen_pos(&ctx, p);
+                                    painter.circle_stroke(pos, selection_radius, error_stroke);
+                                }
+                                &abalone::MoveError::TooManyInferred { first, last } => {
+                                    highlight_selection(painter, &ctx, [first, last], ERROR_COLOR);
+                                }
+                                &abalone::MoveError::TooManyOpposing { first, last } => {
+                                    highlight_selection(painter, &ctx, [first, last], ERROR_COLOR);
+                                }
+                                abalone::MoveError::NotFree(not_free) => {
+                                    for &p in not_free.iter() {
+                                        let pos = game_to_screen_pos(&ctx, p);
+                                        painter.circle_stroke(pos, selection_radius, error_stroke);
+                                    }
+                                }
                             },
-                            Ok(success) => {
-                                // TODO: display move
-                            }
+                            Ok(success) => match success {
+                                &abalone::Success::PushedOff { first, last } => {
+                                    let norm = (last - first).norm();
+                                    let selection = [first + norm, last];
+                                    highlight_selection(painter, &ctx, selection, SUCCESS_COLOR)
+                                }
+                                &abalone::Success::PushedAway { first, last } => {
+                                    let norm = (last - first).norm();
+                                    let selection = [first + norm, last + norm];
+                                    highlight_selection(painter, &ctx, selection, SUCCESS_COLOR)
+                                }
+                                &abalone::Success::Moved { dir, first, last } => {
+                                    let selection = [first + dir.vec(), last + dir.vec()];
+                                    highlight_selection(painter, &ctx, selection, SUCCESS_COLOR)
+                                }
+                            },
                         }
                     }
                 }
@@ -285,6 +251,83 @@ fn highlight_selection(
         let pos = game_to_screen_pos(ctx, p);
         let stroke = Stroke::new(ctx.line_thickness, color);
         painter.circle_stroke(pos, ctx.selection_radius, stroke);
+    }
+}
+
+fn check_input(i: &mut InputState, app: &mut AbaloneApp, ctx: &Context) {
+    if i.consume_key(Modifiers::NONE, Key::Space) {
+        app.board_flipped = !app.board_flipped;
+    }
+
+    if i.pointer.secondary_pressed() {
+        if let Some(current) = i.pointer.interact_pos() {
+            let pos = screen_to_game_pos(&ctx, current);
+            if abalone::is_in_bounds(pos) {
+                let error = app.game.check_selection([pos; 2]).err();
+                app.state = State::Selection([pos; 2], error)
+            } else {
+                app.state = State::NoSelection;
+            }
+        }
+    }
+    if i.pointer.is_decidedly_dragging() {
+        if let (Some(origin), Some(current)) = (i.pointer.press_origin(), i.pointer.interact_pos())
+        {
+            let kind = if i.pointer.primary_down() {
+                DragKind::Direction
+            } else {
+                DragKind::Selection
+            };
+            let start = screen_to_game_pos(&ctx, origin);
+            let end = screen_to_game_pos(&ctx, current);
+
+            match kind {
+                DragKind::Selection => {
+                    if abalone::is_in_bounds(start) && abalone::is_in_bounds(end) {
+                        let error = app.game.check_selection([start, end]).err();
+                        app.state = State::Selection([start, end], error);
+                    } else {
+                        app.state = State::NoSelection;
+                    }
+                }
+                DragKind::Direction => {
+                    match &app.state {
+                        // TODO: consider allowing moves of single balls, without
+                        // any selection
+                        State::NoSelection => (),
+                        State::Selection(selection, error) => {
+                            if error.is_none() {
+                                app.state = try_move(
+                                    &app.game,
+                                    *selection,
+                                    [start, end],
+                                    [origin, current],
+                                );
+                            }
+                        }
+                        State::Move(selection, _) => {
+                            app.state =
+                                try_move(&app.game, *selection, [start, end], [origin, current]);
+                        }
+                    }
+                }
+            }
+
+            app.drag = Some((kind, origin, current));
+        } else {
+            // drag released
+            if let State::Move(selection, res) = &app.state {
+                app.state = match res {
+                    Ok(success) => {
+                        app.game.apply_move(success);
+                        State::NoSelection
+                    }
+                    Err(_) => State::Selection(*selection, None),
+                };
+            }
+        }
+    } else {
+        app.drag = None;
     }
 }
 
