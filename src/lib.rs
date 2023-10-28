@@ -499,9 +499,18 @@ impl Abalone {
                     }
                 }
             };
+            
+            if force <= 1 {
+                return Err(MoveError::TooManyOpposing {
+                    first: opposing_first,
+                    last: opposing_first,
+                }
+                .into());
+            }
 
             let opposing_color = color.opposite();
             let mut opposing_force = 1;
+
             loop {
                 let p = opposing_first + dir.vec() * opposing_force;
                 match self.get(p) {

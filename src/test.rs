@@ -13,12 +13,16 @@ fn start() -> CheckState {
 impl CheckState {
     fn check_move(
         mut self,
-        first: impl Into<Pos2>,
-        last: impl Into<Pos2>,
+        first: impl Into<Pos2> + Copy,
+        last: impl Into<Pos2> + Copy,
         dir: Dir,
         expected: Result<Success, Error>,
     ) -> Self {
-        let res = self.game.check_move([first.into(), last.into()], dir);
+        let mut res = self.game.check_move([first.into(), last.into()], dir);
+        if let Err(Error::Selection(SelectionError::WrongTurn(_))) = res {
+            self.game.turn = self.game.turn.opposite();
+            res = self.game.check_move([first.into(), last.into()], dir);
+        }
         if let Ok(s) = &res {
             println!("{}", self.game);
             self.game.apply_move(s);
@@ -26,8 +30,18 @@ impl CheckState {
         assert_eq!(res, expected, "\n{}", self.game);
         self
     }
-    fn assert_move(mut self, first: impl Into<Pos2>, last: impl Into<Pos2>, dir: Dir) -> Self {
-        let res = self.game.check_move([first.into(), last.into()], dir);
+
+    fn assert_move(
+        mut self,
+        first: impl Into<Pos2> + Copy,
+        last: impl Into<Pos2> + Copy,
+        dir: Dir,
+    ) -> Self {
+        let mut res = self.game.check_move([first.into(), last.into()], dir);
+        if let Err(Error::Selection(SelectionError::WrongTurn(_))) = res {
+            self.game.turn = self.game.turn.opposite();
+            res = self.game.check_move([first.into(), last.into()], dir);
+        }
         if let Ok(s) = &res {
             println!("{}", self.game);
             self.game.apply_move(s);
@@ -123,6 +137,44 @@ fn mixed_set_forward_motion() {
             Err(Error::Selection(SelectionError::MixedSet(
                 [(6, 6).into(), (7, 7).into()].into(),
             ))),
+        );
+}
+
+#[test]
+fn one_vs_one_push_off() {
+    start()
+        .assert_move((0, 1), (0, 1), Dir::PosZ)
+        .assert_move((1, 2), (1, 2), Dir::PosY)
+        .assert_move((1, 3), (1, 3), Dir::PosZ)
+        .assert_move((2, 4), (2, 4), Dir::PosY)
+        .assert_move((2, 5), (2, 5), Dir::PosZ)
+        .check_move(
+            (3, 6),
+            (3, 6),
+            Dir::PosY,
+            Err(Error::Move(MoveError::TooManyOpposing {
+                first: (3, 7).into(),
+                last: (3, 7).into(),
+            })),
+        );
+}
+
+#[test]
+fn one_vs_one_push_away() {
+    start()
+        .assert_move((0, 1), (0, 1), Dir::PosZ)
+        .assert_move((1, 2), (1, 2), Dir::PosY)
+        .assert_move((1, 3), (1, 3), Dir::PosZ)
+        .assert_move((2, 4), (2, 4), Dir::PosY)
+        .assert_move((2, 5), (2, 5), Dir::PosZ)
+        .check_move(
+            (3, 7),
+            (3, 7),
+            Dir::NegY,
+            Err(Error::Move(MoveError::TooManyOpposing {
+                first: (3, 6).into(),
+                last: (3, 6).into(),
+            })),
         );
 }
 
