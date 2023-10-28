@@ -4,7 +4,7 @@ use abalone::{Abalone, Color, Dir, SelectionError};
 use eframe::NativeOptions;
 use egui::{
     CentralPanel, Color32, Frame, Id, InputState, Key, Modifiers, Painter, Pos2, Rect, Rounding,
-    Stroke, Vec2,
+    Stroke, Ui, Vec2,
 };
 
 const SELECTION_COLOR: Color32 = Color32::from_rgb(0x40, 0x60, 0xE0);
@@ -97,154 +97,148 @@ impl eframe::App for AbaloneApp {
                     check_input(i, self, &ctx);
                 });
 
-                let painter = ui.painter();
-
-                // balls
-                for (x, y, val) in self.game.iter() {
-                    let pos = game_to_screen_pos(&ctx, (x, y).into());
-                    match val {
-                        Some(Color::Black) => {
-                            painter.circle_filled(pos, ball_radius, Color32::from_gray(0x02));
-                        }
-                        Some(Color::White) => {
-                            painter.circle_filled(pos, ball_radius, Color32::from_gray(0xD0));
-                        }
-                        None => {
-                            let stroke = Stroke::new(line_thickness, Color32::from_gray(0x80));
-                            painter.circle_stroke(pos, selection_radius, stroke);
-                        }
-                    }
-                }
-
-                // highlight current state
-                let error_stroke = Stroke::new(line_thickness, ERROR_COLOR);
-                match &self.state {
-                    State::NoSelection => (),
-                    State::Selection(selection, error) => match error {
-                        &Some(SelectionError::WrongTurn(p)) => {
-                            let pos = game_to_screen_pos(&ctx, p);
-                            painter.circle_stroke(pos, selection_radius, error_stroke);
-                            let rect = Rect::from_center_size(pos, Vec2::splat(0.8 * ball_radius));
-                            painter.rect_filled(
-                                rect,
-                                Rounding::same(0.1 * ball_radius),
-                                ERROR_COLOR,
-                            );
-                        }
-                        Some(SelectionError::InvalidSet) => {
-                            let [start, end] = *selection;
-                            let pos = game_to_screen_pos(&ctx, start);
-                            painter.circle_stroke(pos, selection_radius, error_stroke);
-                            let pos = game_to_screen_pos(&ctx, end);
-                            painter.circle_stroke(pos, selection_radius, error_stroke);
-                        }
-                        Some(SelectionError::MixedSet(mixed)) => {
-                            highlight_selection(painter, &ctx, *selection, SELECTION_COLOR);
-                            for &p in mixed.iter() {
-                                let pos = game_to_screen_pos(&ctx, p);
-                                painter.circle_stroke(pos, selection_radius, error_stroke);
-                            }
-                        }
-                        Some(SelectionError::NotABall(p)) => {
-                            highlight_selection(painter, &ctx, *selection, SELECTION_COLOR);
-                            let pos = game_to_screen_pos(&ctx, *p);
-                            painter.circle_stroke(pos, selection_radius, error_stroke);
-                        }
-                        Some(SelectionError::TooMany) => {
-                            highlight_selection(painter, &ctx, *selection, ERROR_COLOR);
-                        }
-                        Some(SelectionError::NoPossibleMove) => {
-                            highlight_selection(painter, &ctx, *selection, WARN_COLOR);
-                        }
-                        None => {
-                            highlight_selection(painter, &ctx, *selection, SELECTION_COLOR);
-                        }
-                    },
-                    State::Move(selection, res) => {
-                        highlight_selection(painter, &ctx, *selection, SELECTION_COLOR);
-                        match res {
-                            Err(abalone::Error::Selection(_)) => (),
-                            Err(abalone::Error::Move(e)) => match e {
-                                &abalone::MoveError::PushedOff(p) => {
-                                    let pos = game_to_screen_pos(&ctx, p);
-                                    painter.circle_stroke(pos, selection_radius, error_stroke);
-                                }
-                                &abalone::MoveError::BlockedByOwn(p) => {
-                                    let pos = game_to_screen_pos(&ctx, p);
-                                    painter.circle_stroke(pos, selection_radius, error_stroke);
-                                }
-                                &abalone::MoveError::TooManyInferred { first, last } => {
-                                    highlight_selection(painter, &ctx, [first, last], ERROR_COLOR);
-                                }
-                                &abalone::MoveError::TooManyOpposing { first, last } => {
-                                    highlight_selection(painter, &ctx, [first, last], ERROR_COLOR);
-                                }
-                                abalone::MoveError::NotFree(not_free) => {
-                                    for &p in not_free.iter() {
-                                        let pos = game_to_screen_pos(&ctx, p);
-                                        painter.circle_stroke(pos, selection_radius, error_stroke);
-                                    }
-                                }
-                            },
-                            Ok(success) => match success {
-                                &abalone::Success::PushedOff { first, last } => {
-                                    let norm = (last - first).norm();
-                                    let selection = [first + norm, last];
-                                    highlight_selection(painter, &ctx, selection, SUCCESS_COLOR)
-                                }
-                                &abalone::Success::PushedAway { first, last } => {
-                                    let norm = (last - first).norm();
-                                    let selection = [first + norm, last + norm];
-                                    highlight_selection(painter, &ctx, selection, SUCCESS_COLOR)
-                                }
-                                &abalone::Success::Moved { dir, first, last } => {
-                                    let selection = [first + dir.vec(), last + dir.vec()];
-                                    highlight_selection(painter, &ctx, selection, SUCCESS_COLOR)
-                                }
-                            },
-                        }
-                    }
-                }
-
-                match self.drag {
-                    Some((DragKind::Selection, start, end)) => {
-                        // center on selected ball
-                        let start = screen_to_game_pos(&ctx, start);
-                        let start = game_to_screen_pos(&ctx, start);
-
-                        let line_color = with_alpha(SELECTION_COLOR, 0x80);
-                        let stroke = Stroke::new(0.2 * ball_radius, line_color);
-                        painter.line_segment([start, end], stroke);
-                    }
-                    Some((DragKind::Direction, start, end)) => {
-                        let line_color = Color32::from_rgba_unmultiplied(0xF0, 0xA0, 0x40, 0x80);
-                        let stroke = Stroke::new(0.2 * ball_radius, line_color);
-                        painter.line_segment([start, end], stroke);
-
-                        // arrow tip
-                        let vec = end - start;
-                        if vec.length() > 0.5 * ball_offset {
-                            let tip_length = 0.25 * ball_offset;
-                            let arrow_angle = vec.angle();
-                            let left_tip_angle = arrow_angle - FRAC_PI_4;
-                            let right_tip_angle = arrow_angle + FRAC_PI_4;
-                            let tip_left = end
-                                - Vec2::new(
-                                    left_tip_angle.cos() * tip_length,
-                                    left_tip_angle.sin() * tip_length,
-                                );
-                            let tip_right = end
-                                - Vec2::new(
-                                    right_tip_angle.cos() * tip_length,
-                                    right_tip_angle.sin() * tip_length,
-                                );
-                            painter.line_segment([end, tip_left], stroke);
-                            painter.line_segment([end, tip_right], stroke);
-                        }
-                    }
-                    None => (),
-                }
+                draw_game(ui, self, &ctx);
             });
+    }
+}
+
+fn draw_game(ui: &mut Ui, app: &AbaloneApp, ctx: &Context) {
+    let painter = ui.painter();
+
+    // balls
+    for (x, y, val) in app.game.iter() {
+        let pos = game_to_screen_pos(&ctx, (x, y).into());
+        match val {
+            Some(Color::Black) => {
+                painter.circle_filled(pos, ctx.ball_radius, Color32::from_gray(0x02));
+            }
+            Some(Color::White) => {
+                painter.circle_filled(pos, ctx.ball_radius, Color32::from_gray(0xD0));
+            }
+            None => {
+                let stroke = Stroke::new(ctx.line_thickness, Color32::from_gray(0x80));
+                painter.circle_stroke(pos, ctx.selection_radius, stroke);
+            }
+        }
+    }
+
+    // highlight current state
+    match &app.state {
+        State::NoSelection => (),
+        State::Selection(selection, error) => match error {
+            &Some(SelectionError::WrongTurn(p)) => {
+                let pos = game_to_screen_pos(&ctx, p);
+                let error_stroke = Stroke::new(ctx.line_thickness, ERROR_COLOR);
+                painter.circle_stroke(pos, ctx.selection_radius, error_stroke);
+
+                let rect = Rect::from_center_size(pos, Vec2::splat(0.8 * ctx.ball_radius));
+                painter.rect_filled(rect, Rounding::same(0.1 * ctx.ball_radius), ERROR_COLOR);
+            }
+            Some(SelectionError::InvalidSet) => {
+                let [start, end] = *selection;
+                highlight_one(painter, ctx, start, ERROR_COLOR);
+                highlight_one(painter, ctx, end, ERROR_COLOR);
+            }
+            Some(SelectionError::MixedSet(mixed)) => {
+                highlight_selection(painter, &ctx, *selection, SELECTION_COLOR);
+                for &p in mixed.iter() {
+                    highlight_one(painter, ctx, p, ERROR_COLOR);
+                }
+            }
+            &Some(SelectionError::NotABall(p)) => {
+                highlight_selection(painter, &ctx, *selection, SELECTION_COLOR);
+                highlight_one(painter, ctx, p, ERROR_COLOR);
+            }
+            Some(SelectionError::TooMany) => {
+                highlight_selection(painter, &ctx, *selection, ERROR_COLOR);
+            }
+            Some(SelectionError::NoPossibleMove) => {
+                highlight_selection(painter, &ctx, *selection, WARN_COLOR);
+            }
+            None => {
+                highlight_selection(painter, &ctx, *selection, SELECTION_COLOR);
+            }
+        },
+        State::Move(selection, res) => {
+            highlight_selection(painter, &ctx, *selection, SELECTION_COLOR);
+            match res {
+                Err(abalone::Error::Selection(_)) => (),
+                Err(abalone::Error::Move(e)) => match e {
+                    &abalone::MoveError::PushedOff(p) => {
+                        highlight_one(painter, ctx, p, ERROR_COLOR);
+                    }
+                    &abalone::MoveError::BlockedByOwn(p) => {
+                        highlight_one(painter, ctx, p, ERROR_COLOR);
+                    }
+                    &abalone::MoveError::TooManyInferred { first, last } => {
+                        highlight_selection(painter, &ctx, [first, last], ERROR_COLOR);
+                    }
+                    &abalone::MoveError::TooManyOpposing { first, last } => {
+                        highlight_selection(painter, &ctx, [first, last], ERROR_COLOR);
+                    }
+                    abalone::MoveError::NotFree(not_free) => {
+                        for &p in not_free.iter() {
+                            highlight_one(painter, ctx, p, ERROR_COLOR);
+                        }
+                    }
+                },
+                Ok(success) => match success {
+                    &abalone::Success::PushedOff { first, last } => {
+                        let norm = (last - first).norm();
+                        let selection = [first + norm, last];
+                        highlight_selection(painter, &ctx, selection, SUCCESS_COLOR)
+                    }
+                    &abalone::Success::PushedAway { first, last } => {
+                        let norm = (last - first).norm();
+                        let selection = [first + norm, last + norm];
+                        highlight_selection(painter, &ctx, selection, SUCCESS_COLOR)
+                    }
+                    &abalone::Success::Moved { dir, first, last } => {
+                        let selection = [first + dir.vec(), last + dir.vec()];
+                        highlight_selection(painter, &ctx, selection, SUCCESS_COLOR)
+                    }
+                },
+            }
+        }
+    }
+
+    match app.drag {
+        Some((DragKind::Selection, start, end)) => {
+            // center on selected ball
+            let start = screen_to_game_pos(&ctx, start);
+            let start = game_to_screen_pos(&ctx, start);
+
+            let line_color = with_alpha(SELECTION_COLOR, 0x80);
+            let stroke = Stroke::new(0.2 * ctx.ball_radius, line_color);
+            painter.line_segment([start, end], stroke);
+        }
+        Some((DragKind::Direction, start, end)) => {
+            let line_color = Color32::from_rgba_unmultiplied(0xF0, 0xA0, 0x40, 0x80);
+            let stroke = Stroke::new(0.2 * ctx.ball_radius, line_color);
+            painter.line_segment([start, end], stroke);
+
+            // arrow tip
+            let vec = end - start;
+            if vec.length() > 0.5 * ctx.ball_offset {
+                let tip_length = 0.25 * ctx.ball_offset;
+                let arrow_angle = vec.angle();
+                let left_tip_angle = arrow_angle - FRAC_PI_4;
+                let right_tip_angle = arrow_angle + FRAC_PI_4;
+                let tip_left = end
+                    - Vec2::new(
+                        left_tip_angle.cos() * tip_length,
+                        left_tip_angle.sin() * tip_length,
+                    );
+                let tip_right = end
+                    - Vec2::new(
+                        right_tip_angle.cos() * tip_length,
+                        right_tip_angle.sin() * tip_length,
+                    );
+                painter.line_segment([end, tip_left], stroke);
+                painter.line_segment([end, tip_right], stroke);
+            }
+        }
+        None => (),
     }
 }
 
@@ -260,10 +254,14 @@ fn highlight_selection(
     let mag = vec.mag();
     for i in 0..=mag {
         let p = start + norm * i;
-        let pos = game_to_screen_pos(ctx, p);
-        let stroke = Stroke::new(ctx.line_thickness, color);
-        painter.circle_stroke(pos, ctx.selection_radius, stroke);
+        highlight_one(painter, ctx, p, color);
     }
+}
+
+fn highlight_one(painter: &Painter, ctx: &Context, pos: abalone::Pos2, color: Color32) {
+    let pos = game_to_screen_pos(ctx, pos);
+    let stroke = Stroke::new(ctx.line_thickness, color);
+    painter.circle_stroke(pos, ctx.selection_radius, stroke);
 }
 
 fn check_input(i: &mut InputState, app: &mut AbaloneApp, ctx: &Context) {
