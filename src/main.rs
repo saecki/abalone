@@ -177,9 +177,11 @@ fn draw_game(ui: &mut Ui, app: &AbaloneApp, ctx: &Context) {
                     highlight_one(painter, ctx, p, ERROR_COLOR);
                 }
             }
-            &Some(SelectionError::NotABall(p)) => {
+            Some(SelectionError::NotABall(no_ball)) => {
                 highlight_selection(painter, &ctx, *selection, SELECTION_COLOR);
-                highlight_one(painter, ctx, p, ERROR_COLOR);
+                for &p in no_ball.iter() {
+                    highlight_one(painter, ctx, p, ERROR_COLOR);
+                }
             }
             Some(SelectionError::TooMany) => {
                 highlight_selection(painter, &ctx, *selection, ERROR_COLOR);
@@ -316,10 +318,8 @@ fn check_input(i: &mut InputState, app: &mut AbaloneApp, ctx: &Context) {
                 } else {
                     match &app.state {
                         State::NoSelection => {
-                            if abalone::is_in_bounds(pos) {
-                                let error = app.game.check_selection([pos; 2]).err();
-                                app.state = State::Selection([pos; 2], error)
-                            }
+                            let error = app.game.check_selection([pos; 2]).err();
+                            app.state = State::Selection([pos; 2], error)
                         }
                         &State::Selection([start, end], _) => {
                             let sel_vec = end - start;

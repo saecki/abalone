@@ -69,7 +69,7 @@ pub enum SelectionError {
     /// the position is the color of the first offending ball.
     MixedSet(StackVec<2, Pos2>),
     /// No ball was found ad the position.
-    NotABall(Pos2),
+    NotABall(StackVec<3, Pos2>),
     /// More than 3 balls.
     TooMany,
     /// No matter what direction, there isn't any valid move.
@@ -436,12 +436,11 @@ impl Abalone {
     }
 
     pub fn check_move(&self, [mut first, mut last]: [Pos2; 2], dir: Dir) -> Result<Success, Error> {
-        let Some(&Some(color)) = self.get(first) else {
-            return Err(SelectionError::NotABall(first).into());
+        if let Some(&Some(color)) = self.get(first) {
+            if color != self.turn {
+                return Err(SelectionError::WrongTurn(first).into());
+            }
         };
-        if color != self.turn {
-            return Err(SelectionError::WrongTurn(first).into());
-        }
 
         let mut vec = last - first;
         let norm = if vec != Vec2::ZERO {
@@ -466,6 +465,18 @@ impl Abalone {
         if mag >= 3 {
             return Err(SelectionError::TooMany.into());
         }
+
+        let Some(&Some(color)) = self.get(first) else {
+            let mut no_ball = StackVec::new();
+            no_ball.push(first);
+            for i in 1..=mag {
+                let pos = first + norm * i;
+                if !self.get(pos).is_some_and(|c| c.is_some()) {
+                    no_ball.push(pos);
+                }
+            }
+            return Err(SelectionError::NotABall(no_ball).into());
+        };
 
         if norm == dir.vec() {
             // forward motion
@@ -549,7 +560,16 @@ impl Abalone {
                 match self.get(p) {
                     Some(&Some(c)) if c != color => mixed_set.push(p),
                     Some(Some(_)) => (),
-                    Some(None) | None => return Err(SelectionError::NotABall(p).into()),
+                    Some(None) | None => {
+                        let mut no_ball = StackVec::new();
+                        for j in i..=mag {
+                            let pos = first + norm * j;
+                            if !self.get(pos).is_some_and(|c| c.is_some()) {
+                                no_ball.push(pos);
+                            }
+                        }
+                        return Err(SelectionError::NotABall(no_ball).into());
+                    }
                 }
             }
 
