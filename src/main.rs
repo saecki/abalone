@@ -491,10 +491,10 @@ fn check_input(i: &mut InputState, app: &mut AbaloneApp, ctx: &Context) {
                 DragKind::Selection
             };
             let start = screen_to_game_pos(&ctx, origin);
-            let end = screen_to_game_pos(&ctx, current);
 
             match kind {
                 DragKind::Selection => {
+                    let end = screen_to_game_pos(&ctx, current);
                     if abalone::is_in_bounds(start) && abalone::is_in_bounds(end) {
                         let error = app.game.check_selection([start, end]).err();
                         app.state = State::Selection([start, end], error);
@@ -507,27 +507,18 @@ fn check_input(i: &mut InputState, app: &mut AbaloneApp, ctx: &Context) {
                         State::NoSelection => {
                             // use the start position as selection if there is none
                             if abalone::is_in_bounds(start) {
-                                app.state = try_move(
-                                    &app.game,
-                                    [start; 2],
-                                    [start, end],
-                                    [origin, current],
-                                );
+                                app.state =
+                                    try_move(&app.game, &ctx, [start; 2], [origin, current]);
                             }
                         }
                         State::Selection(selection, error) => {
                             if error.is_none() {
-                                app.state = try_move(
-                                    &app.game,
-                                    *selection,
-                                    [start, end],
-                                    [origin, current],
-                                );
+                                app.state =
+                                    try_move(&app.game, &ctx, *selection, [origin, current]);
                             }
                         }
                         State::Move(selection, _) => {
-                            app.state =
-                                try_move(&app.game, *selection, [start, end], [origin, current]);
+                            app.state = try_move(&app.game, &ctx, *selection, [origin, current]);
                         }
                     }
                 }
@@ -581,32 +572,25 @@ fn redo(app: &mut AbaloneApp) {
 
 fn try_move(
     game: &Abalone,
+    ctx: &Context,
     selection: [abalone::Pos2; 2],
-    [start, end]: [abalone::Pos2; 2],
     [origin, current]: [Pos2; 2],
 ) -> State {
-    let dir_vec = end - start;
-    if dir_vec == abalone::Vec2::ZERO {
+    let drag_vec = current - origin;
+    if drag_vec.length() < 0.5 * ctx.ball_offset {
         let error = game.check_selection(selection).err();
         return State::Selection(selection, error);
     }
 
-    let dir_norm = dir_vec.norm();
-    if let Some(dir) = dir_norm.unit_vec() {
-        let res = game.check_move(selection, dir);
-        return State::Move(selection, res);
-    }
-
-    let drag_vec = current - origin;
-    let angle = (6.0 * drag_vec.angle() / TAU).round();
+    let angle = (6.0 * ((drag_vec.angle() + TAU) % TAU) / TAU).round();
     let idx = (angle as u8) % 6;
     let dir = match idx {
         0 => Dir::PosX,
-        1 => Dir::NegY,
-        2 => Dir::NegZ,
+        1 => Dir::PosZ,
+        2 => Dir::PosY,
         3 => Dir::NegX,
-        4 => Dir::PosY,
-        5 => Dir::PosZ,
+        4 => Dir::NegZ,
+        5 => Dir::NegY,
         _ => unreachable!(),
     };
 
