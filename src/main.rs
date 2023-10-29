@@ -281,8 +281,10 @@ fn draw_game(ui: &mut Ui, app: &mut AbaloneApp, ctx: &Context) {
             match res {
                 Err(abalone::Error::Selection(_)) => (),
                 Err(abalone::Error::Move(e)) => match e {
-                    &abalone::MoveError::PushedOff(p) => {
-                        highlight_one(painter, ctx, p, ERROR_COLOR);
+                    abalone::MoveError::PushedOff(pushed_off) => {
+                        for &p in pushed_off.iter() {
+                            highlight_one(painter, ctx, p, ERROR_COLOR);
+                        }
                     }
                     &abalone::MoveError::BlockedByOwn(p) => {
                         highlight_one(painter, ctx, p, ERROR_COLOR);

@@ -81,7 +81,7 @@ pub enum SelectionError {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum MoveError {
     /// Would push off your own ball.
-    PushedOff(Pos2),
+    PushedOff(StackVec<3, Pos2>),
     /// A ball off your own color, is blocking you from pushing opposing balls.
     BlockedByOwn(Pos2),
     /// More than 3 balls of the same color were inferred,
@@ -512,7 +512,7 @@ impl Abalone {
                     }
                     None => {
                         let last = first + dir.vec() * (force - 1);
-                        return Err(MoveError::PushedOff(last).into());
+                        return Err(MoveError::PushedOff(StackVec::from([last])).into());
                     }
                 }
             };
@@ -580,18 +580,22 @@ impl Abalone {
             }
 
             let mut non_free = StackVec::new();
+            let mut pushed_off = StackVec::new();
             for i in 0..=mag {
                 let current_pos = first + norm * i;
                 let new_pos = current_pos + dir.vec();
                 match self.get(new_pos) {
                     Some(&Some(_)) => non_free.push(new_pos),
                     Some(None) => (),
-                    None => return Err(MoveError::PushedOff(current_pos).into()),
+                    None => pushed_off.push(current_pos),
                 }
             }
 
             if !non_free.is_empty() {
                 return Err(MoveError::NotFree(non_free).into());
+            }
+            if !pushed_off.is_empty() {
+                return Err(MoveError::PushedOff(pushed_off).into());
             }
 
             Ok(Success::Moved { dir, first, last })
