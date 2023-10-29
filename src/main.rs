@@ -15,6 +15,8 @@ const SUCCESS_COLOR: Color32 = Color32::from_rgb(0x40, 0xF0, 0x60);
 const WARN_COLOR: Color32 = Color32::from_rgb(0xF0, 0xE0, 0x40);
 const ERROR_COLOR: Color32 = Color32::from_rgb(0xE0, 0x60, 0x40);
 
+const ERROR_DISPLAY_TIME: f64 = 0.4;
+
 fn main() {
     let native_options = NativeOptions {
         follow_system_theme: true,
@@ -32,6 +34,7 @@ struct AbaloneApp {
     game: Abalone,
     drag: Option<(DragKind, Pos2, Pos2)>,
     state: State,
+    input_errors: Vec<InputError>,
     board_flipped: bool,
 }
 
@@ -41,9 +44,22 @@ impl AbaloneApp {
             game: Abalone::new(),
             drag: None,
             state: State::NoSelection,
+            input_errors: Vec::new(),
             board_flipped: false,
         }
     }
+}
+
+enum InputError {
+    WrongTurn {
+        start_secs: f64,
+        pos: abalone::Pos2,
+    },
+    InvalidSet {
+        start_secs: f64,
+        start: abalone::Pos2,
+        end: abalone::Pos2,
+    },
 }
 
 enum DragKind {
@@ -159,12 +175,12 @@ fn draw_game(ui: &mut Ui, app: &AbaloneApp, ctx: &Context) {
         State::NoSelection => (),
         State::Selection(selection, error) => match error {
             &Some(SelectionError::WrongTurn(p)) => {
-                let pos = game_to_screen_pos(&ctx, p);
-                let error_stroke = Stroke::new(ctx.line_thickness, ERROR_COLOR);
-                painter.circle_stroke(pos, ctx.selection_radius, error_stroke);
+                highlight_one_square(painter, ctx, p, ERROR_COLOR);
 
-                let rect = Rect::from_center_size(pos, Vec2::splat(0.8 * ctx.ball_radius));
-                painter.rect_filled(rect, Rounding::same(0.1 * ctx.ball_radius), ERROR_COLOR);
+                let [start, end] = *selection;
+                if start != end {
+                    highlight_one(painter, ctx, end, ERROR_COLOR);
+                }
             }
             Some(SelectionError::InvalidSet) => {
                 let [start, end] = *selection;
@@ -236,6 +252,21 @@ fn draw_game(ui: &mut Ui, app: &AbaloneApp, ctx: &Context) {
         }
     }
 
+    for e in app.input_errors.iter() {
+        // request repaint so the input errors will be cleared
+        ui.ctx().request_repaint();
+
+        match e {
+            &InputError::WrongTurn { pos, .. } => {
+                highlight_one_square(painter, ctx, pos, ERROR_COLOR);
+            }
+            &InputError::InvalidSet { start, end, .. } => {
+                highlight_one(painter, ctx, start, ERROR_COLOR);
+                highlight_one(painter, ctx, end, ERROR_COLOR);
+            }
+        };
+    }
+
     match app.drag {
         Some((DragKind::Selection, start, end)) => {
             // center on selected ball
@@ -290,6 +321,14 @@ fn highlight_selection(
         let p = start + norm * i;
         highlight_one(painter, ctx, p, color);
     }
+}
+
+fn highlight_one_square(painter: &Painter, ctx: &Context, pos: abalone::Pos2, color: Color32) {
+    let pos = game_to_screen_pos(&ctx, pos);
+    let stroke = Stroke::new(ctx.line_thickness, color);
+    painter.circle_stroke(pos, ctx.selection_radius, stroke);
+    let rect = Rect::from_center_size(pos, Vec2::splat(0.8 * ctx.ball_radius));
+    painter.rect_filled(rect, Rounding::same(0.1 * ctx.ball_radius), color);
 }
 
 fn highlight_one(painter: &Painter, ctx: &Context, pos: abalone::Pos2, color: Color32) {
@@ -358,15 +397,31 @@ fn check_input(i: &mut InputState, app: &mut AbaloneApp, ctx: &Context) {
                                     }
                                 }
                             }
-
-                            // clear selection only if it's invalid set
-                            if let State::Selection(_, Some(SelectionError::InvalidSet)) =
-                                &app.state
-                            {
-                                app.state = State::NoSelection;
-                            }
                         }
                         State::Move(_, _) => (),
+                    }
+
+                    // clear selection only if it's invalid set
+                    if let State::Selection(selection, error) = &app.state {
+                        match error {
+                            Some(SelectionError::WrongTurn(p)) => {
+                                app.input_errors.push(InputError::WrongTurn {
+                                    start_secs: i.time,
+                                    pos: *p,
+                                });
+                                app.state = State::NoSelection;
+                            }
+                            Some(SelectionError::InvalidSet) => {
+                                let [start, end] = *selection;
+                                app.input_errors.push(InputError::InvalidSet {
+                                    start_secs: i.time,
+                                    start,
+                                    end,
+                                });
+                                app.state = State::NoSelection;
+                            }
+                            _ => (),
+                        }
                     }
                 }
             } else {
@@ -450,6 +505,14 @@ fn check_input(i: &mut InputState, app: &mut AbaloneApp, ctx: &Context) {
     } else {
         app.drag = None;
     }
+
+    app.input_errors.retain(|e| {
+        let start = match e {
+            InputError::WrongTurn { start_secs, .. } => start_secs,
+            InputError::InvalidSet { start_secs, .. } => start_secs,
+        };
+        start + ERROR_DISPLAY_TIME > i.time
+    });
 }
 
 fn try_move(
