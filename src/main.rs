@@ -475,28 +475,28 @@ fn check_input(i: &mut InputState, app: &mut AbaloneApp, ctx: &Context) {
                         }
                         State::Move(_, _) => (),
                     }
+                }
 
-                    // clear selection only if it's invalid set
-                    if let State::Selection(selection, error) = &app.state {
-                        match error {
-                            Some(SelectionError::WrongTurn(p)) => {
-                                app.input_errors.push(InputError::WrongTurn {
-                                    start_secs: i.time,
-                                    pos: *p,
-                                });
-                                app.state = State::NoSelection;
-                            }
-                            Some(SelectionError::InvalidSet) => {
-                                let [start, end] = *selection;
-                                app.input_errors.push(InputError::InvalidSet {
-                                    start_secs: i.time,
-                                    start,
-                                    end,
-                                });
-                                app.state = State::NoSelection;
-                            }
-                            _ => (),
+                // clear selection only if it's invalid set
+                if let State::Selection(selection, error) = &app.state {
+                    match error {
+                        Some(SelectionError::WrongTurn(p)) => {
+                            app.input_errors.push(InputError::WrongTurn {
+                                start_secs: i.time,
+                                pos: *p,
+                            });
+                            app.state = State::NoSelection;
                         }
+                        Some(SelectionError::InvalidSet) => {
+                            let [start, end] = *selection;
+                            app.input_errors.push(InputError::InvalidSet {
+                                start_secs: i.time,
+                                start,
+                                end,
+                            });
+                            app.state = State::NoSelection;
+                        }
+                        _ => (),
                     }
                 }
             } else {
