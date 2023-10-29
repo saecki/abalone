@@ -1,11 +1,12 @@
 use std::f32::consts::{FRAC_PI_4, FRAC_PI_6, PI, TAU};
 
 use abalone::{Abalone, Color, Dir, SelectionError};
-use eframe::NativeOptions;
+use eframe::{CreationContext, NativeOptions};
 use egui::{
     Align2, CentralPanel, Color32, FontFamily, FontId, Frame, Id, InputState, Key, Modifiers,
     Painter, Pos2, Rect, Rounding, Sense, Stroke, Ui, Vec2,
 };
+use serde_derive::{Deserialize, Serialize};
 
 const BLACK_COLOR: Color32 = Color32::from_gray(0x02);
 const WHITE_COLOR: Color32 = Color32::from_gray(0xD0);
@@ -27,21 +28,25 @@ fn main() {
     eframe::run_native(
         "abalone",
         native_options,
-        Box::new(|_cc| Box::new(AbaloneApp::new())),
+        Box::new(|cc| Box::new(AbaloneApp::new(cc))),
     )
     .expect("error running app");
 }
 
+#[derive(Serialize, Deserialize)]
 struct AbaloneApp {
     game: Abalone,
+    #[serde(skip)]
     drag: Option<(DragKind, Pos2, Pos2)>,
+    #[serde(skip)]
     state: State,
+    #[serde(skip)]
     input_errors: Vec<InputError>,
     board_flipped: bool,
 }
 
-impl AbaloneApp {
-    fn new() -> Self {
+impl Default for AbaloneApp {
+    fn default() -> Self {
         Self {
             game: Abalone::new(),
             drag: None,
@@ -49,6 +54,18 @@ impl AbaloneApp {
             input_errors: Vec::new(),
             board_flipped: false,
         }
+    }
+}
+
+impl AbaloneApp {
+    fn new(cc: &CreationContext) -> Self {
+        if let Some(storage) = cc.storage {
+            if let Some(app) = eframe::get_value(storage, eframe::APP_KEY) {
+                return app;
+            }
+        }
+
+        Self::default()
     }
 }
 
@@ -73,8 +90,9 @@ enum DragKind {
     Direction,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Default)]
 enum State {
+    #[default]
     NoSelection,
     Selection([abalone::Pos2; 2], Option<SelectionError>),
     Move([abalone::Pos2; 2], Result<abalone::Success, abalone::Error>),
@@ -91,6 +109,10 @@ struct Context {
 }
 
 impl eframe::App for AbaloneApp {
+    fn save(&mut self, storage: &mut dyn eframe::Storage) {
+        eframe::set_value(storage, eframe::APP_KEY, self);
+    }
+
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         CentralPanel::default()
             .frame(Frame::none().fill(Color32::from_gray(0x2B)))

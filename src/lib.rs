@@ -1,5 +1,7 @@
 use std::{fmt, ops};
 
+use serde_derive::{Deserialize, Serialize};
+
 use crate::stackvec::StackVec;
 
 pub mod stackvec;
@@ -14,7 +16,7 @@ const UNIT_Z: Vec2 = Vec2 { x: 1, y: 1 };
 
 const SIZE: i8 = 9;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Success {
     /// Pushed opposing color, off the board.
     PushedOff {
@@ -101,7 +103,7 @@ pub enum MoveError {
     NotFree(StackVec<3, Pos2>),
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize, Serialize)]
 pub enum Color {
     Black,
     White,
@@ -133,7 +135,7 @@ impl Color {
 /// 8 / . . . . * * * * *
 ///  y
 /// ```
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Pos2 {
     pub x: i8,
     pub y: i8,
@@ -274,7 +276,7 @@ impl Vec2 {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Dir {
     PosX,
     PosY,
@@ -297,7 +299,7 @@ impl Dir {
     }
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Abalone {
     pub balls: [[Option<Color>; SIZE as usize]; SIZE as usize],
     pub moves: Vec<Success>,
