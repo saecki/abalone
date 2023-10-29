@@ -174,7 +174,7 @@ fn draw_game(ui: &mut Ui, app: &mut AbaloneApp, ctx: &Context) {
         color,
     );
     if ui.interact(rect, Id::new("undo"), Sense::click()).clicked() {
-        app.game.undo_move();
+        undo(app);
     }
 
     let redo_pos = used_screen_rect.center_top() + Vec2::new(padding, padding);
@@ -191,7 +191,7 @@ fn draw_game(ui: &mut Ui, app: &mut AbaloneApp, ctx: &Context) {
         color,
     );
     if ui.interact(rect, Id::new("redo"), Sense::click()).clicked() {
-        app.game.redo_move();
+        redo(app);
     }
 
     // balls
@@ -382,9 +382,9 @@ fn check_input(i: &mut InputState, app: &mut AbaloneApp, ctx: &Context) {
     if i.consume_key(Modifiers::NONE, Key::Space) {
         app.board_flipped = !app.board_flipped;
     } else if i.consume_key(Modifiers::COMMAND, Key::Z) {
-        app.game.undo_move();
+        undo(app);
     } else if i.consume_key(Modifiers::COMMAND, Key::Y) {
-        app.game.redo_move();
+        redo(app);
     }
 
     if i.pointer.any_click() {
@@ -554,6 +554,16 @@ fn check_input(i: &mut InputState, app: &mut AbaloneApp, ctx: &Context) {
         };
         start + ERROR_DISPLAY_TIME > i.time
     });
+}
+
+fn undo(app: &mut AbaloneApp) {
+    app.state = State::NoSelection;
+    app.game.undo_move();
+}
+
+fn redo(app: &mut AbaloneApp) {
+    app.state = State::NoSelection;
+    app.game.redo_move();
 }
 
 fn try_move(
