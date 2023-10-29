@@ -416,6 +416,8 @@ fn check_input(i: &mut InputState, app: &mut AbaloneApp, ctx: &Context) {
         undo(app);
     } else if i.consume_key(Modifiers::COMMAND, Key::Y) {
         redo(app);
+    } else if i.consume_key(Modifiers::NONE, Key::Escape) {
+        app.state = State::NoSelection;
     }
 
     if i.pointer.any_click() {
