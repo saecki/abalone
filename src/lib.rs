@@ -14,7 +14,7 @@ const UNIT_Z: Vec2 = Vec2 { x: 1, y: 1 };
 
 const SIZE: i8 = 9;
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Success {
     /// Pushed opposing color, off the board.
     PushedOff {
@@ -300,6 +300,8 @@ impl Dir {
 #[derive(Clone, Debug, PartialEq)]
 pub struct Abalone {
     pub balls: [[Option<Color>; SIZE as usize]; SIZE as usize],
+    pub moves: Vec<Success>,
+    pub move_idx: usize,
     pub turn: Color,
 }
 
@@ -359,6 +361,8 @@ impl Abalone {
     pub fn new() -> Self {
         let mut game = Self {
             balls: [[None; SIZE as usize]; SIZE as usize],
+            moves: Vec::new(),
+            move_idx: 0,
             turn: Color::White,
         };
 
@@ -499,7 +503,7 @@ impl Abalone {
                     }
                 }
             };
-            
+
             if force <= 1 {
                 return Err(MoveError::TooManyOpposing {
                     first: opposing_first,
@@ -572,9 +576,40 @@ impl Abalone {
         }
     }
 
-    pub fn apply_move(&mut self, success: &Success) {
+    pub fn submit_move(&mut self, success: Success) {
+        self.apply_move(success);
+
+        self.turn = self.turn.opposite();
+        self.moves.drain(self.move_idx..);
+        self.moves.push(success);
+        self.move_idx += 1;
+    }
+
+    pub fn undo_move(&mut self) {
+        if self.move_idx == 0 {
+            return;
+        }
+
+        self.turn = self.turn.opposite();
+        self.move_idx -= 1;
+        let success = self.moves[self.move_idx];
+        self.unapply_move(success);
+    }
+
+    pub fn redo_move(&mut self) {
+        if self.move_idx == self.moves.len() {
+            return;
+        }
+
+        self.turn = self.turn.opposite();
+        let success = self.moves[self.move_idx];
+        self.move_idx += 1;
+        self.apply_move(success)
+    }
+
+    fn apply_move(&mut self, success: Success) {
         match success {
-            &Success::PushedOff { first, last } => {
+            Success::PushedOff { first, last } => {
                 let vec = last - first;
                 let num = vec.mag();
                 let norm = vec.norm();
@@ -586,7 +621,7 @@ impl Abalone {
                 }
                 self[first] = None;
             }
-            &Success::PushedAway { first, last } => {
+            Success::PushedAway { first, last } => {
                 let vec = last - first;
                 let num = vec.mag();
                 let norm = vec.norm();
@@ -598,7 +633,7 @@ impl Abalone {
                 }
                 self[first] = None;
             }
-            &Success::Moved { dir, first, last } => {
+            Success::Moved { dir, first, last } => {
                 let vec = last - first;
                 let num = vec.mag();
                 let norm = vec.norm();
@@ -611,8 +646,47 @@ impl Abalone {
                 }
             }
         }
+    }
 
-        self.turn = self.turn.opposite();
+    fn unapply_move(&mut self, success: Success) {
+        match success {
+            Success::PushedOff { first, last } => {
+                let vec = last - first;
+                let num = vec.mag();
+                let norm = vec.norm();
+
+                for i in 0..num {
+                    let old = first + norm * i;
+                    let pos = old + norm;
+                    self[old] = self[pos];
+                }
+                self[last] = self[first].map(|c| c.opposite());
+            }
+            Success::PushedAway { first, last } => {
+                let vec = last - first;
+                let num = vec.mag();
+                let norm = vec.norm();
+
+                for i in 0..=num {
+                    let old = first + norm * i;
+                    let pos = old + norm;
+                    self[old] = self[pos];
+                }
+                self[last + norm] = None;
+            }
+            Success::Moved { dir, first, last } => {
+                let vec = last - first;
+                let num = vec.mag();
+                let norm = vec.norm();
+
+                for i in 0..=num {
+                    let old = first + norm * i;
+                    let pos = old + dir.vec();
+                    self[old] = self[pos];
+                    self[pos] = None;
+                }
+            }
+        }
     }
 }
 

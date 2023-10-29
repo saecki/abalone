@@ -23,9 +23,9 @@ impl CheckState {
             self.game.turn = self.game.turn.opposite();
             res = self.game.check_move([first.into(), last.into()], dir);
         }
-        if let Ok(s) = &res {
+        if let Ok(s) = res {
             println!("{}", self.game);
-            self.game.apply_move(s);
+            self.game.submit_move(s);
         }
         assert_eq!(res, expected, "\n{}", self.game);
         self
@@ -42,9 +42,9 @@ impl CheckState {
             self.game.turn = self.game.turn.opposite();
             res = self.game.check_move([first.into(), last.into()], dir);
         }
-        if let Ok(s) = &res {
+        if let Ok(s) = res {
             println!("{}", self.game);
-            self.game.apply_move(s);
+            self.game.submit_move(s);
         }
         assert_eq!(res.err(), None, "\n{}", self.game);
         self

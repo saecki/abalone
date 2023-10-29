@@ -299,6 +299,10 @@ fn highlight_one(painter: &Painter, ctx: &Context, pos: abalone::Pos2, color: Co
 fn check_input(i: &mut InputState, app: &mut AbaloneApp, ctx: &Context) {
     if i.consume_key(Modifiers::NONE, Key::Space) {
         app.board_flipped = !app.board_flipped;
+    } else if i.consume_key(Modifiers::COMMAND, Key::Z) {
+        app.game.undo_move();
+    } else if i.consume_key(Modifiers::COMMAND, Key::Y) {
+        app.game.redo_move();
     }
 
     if i.pointer.any_click() {
@@ -427,7 +431,7 @@ fn check_input(i: &mut InputState, app: &mut AbaloneApp, ctx: &Context) {
                 State::Move(selection, res) => {
                     app.state = match res {
                         Ok(success) => {
-                            app.game.apply_move(success);
+                            app.game.submit_move(*success);
                             State::NoSelection
                         }
                         Err(_) => State::Selection(*selection, None),
