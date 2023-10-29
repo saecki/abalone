@@ -1,11 +1,11 @@
-[package]
-name = "abalone"
-version = "0.1.0"
-authors = ["Saecki <tobiasschmitz2001@gmail.com>"]
-edition = "2018"
+[workspace]
+resolver = "2"
+members = [
+    "core",
+    "client",
+]
 
-[dependencies]
-egui = { version = "0.23.0", features = ["persistence"] }
-eframe = { version = "0.23.0", features = ["persistence"] }
+[workspace.dependencies]
+abalone_core = { path = "core" }
 serde = { version = "1.0", features = ["serde_derive"] }
 serde_derive = "1.0"

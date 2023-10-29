@@ -22,8 +22,17 @@ checksum = "c71b1793ee61086797f5c80b6efa2b8ffa6d5dd703f118545808a7f2e27f7046"
 name = "abalone"
 version = "0.1.0"
 dependencies = [
+ "abalone_core",
  "eframe",
  "egui",
+ "serde",
+ "serde_derive",
+]
+
+[[package]]
+name = "abalone_core"
+version = "0.1.0"
+dependencies = [
  "serde",
  "serde_derive",
 ]

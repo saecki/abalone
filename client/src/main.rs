@@ -1,6 +1,6 @@
 use std::f32::consts::{FRAC_PI_4, FRAC_PI_6, PI, TAU};
 
-use abalone::{Abalone, Color, Dir, SelectionError};
+use abalone_core::{self as abalone, Abalone, Color, Dir, SelectionError};
 use eframe::{CreationContext, NativeOptions};
 use egui::{
     Align2, CentralPanel, Color32, FontFamily, FontId, Frame, Id, InputState, Key, Modifiers,
