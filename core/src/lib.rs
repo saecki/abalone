@@ -141,7 +141,7 @@ pub struct Pos2 {
     pub y: i8,
 }
 
-impl<'a, 'b> ops::Add<Vec2> for Pos2 {
+impl ops::Add<Vec2> for Pos2 {
     type Output = Pos2;
 
     fn add(self, rhs: Vec2) -> Self::Output {
@@ -152,7 +152,7 @@ impl<'a, 'b> ops::Add<Vec2> for Pos2 {
     }
 }
 
-impl<'a, 'b> ops::Sub<Pos2> for Pos2 {
+impl ops::Sub<Pos2> for Pos2 {
     type Output = Vec2;
 
     fn sub(self, rhs: Pos2) -> Self::Output {
@@ -163,7 +163,7 @@ impl<'a, 'b> ops::Sub<Pos2> for Pos2 {
     }
 }
 
-impl<'a, 'b> ops::Sub<Vec2> for Pos2 {
+impl ops::Sub<Vec2> for Pos2 {
     type Output = Pos2;
 
     fn sub(self, rhs: Vec2) -> Self::Output {
@@ -190,7 +190,7 @@ pub struct Vec2 {
     pub y: i8,
 }
 
-impl<'a, 'b> ops::Neg for Vec2 {
+impl ops::Neg for Vec2 {
     type Output = Vec2;
 
     fn neg(self) -> Self::Output {
@@ -201,7 +201,7 @@ impl<'a, 'b> ops::Neg for Vec2 {
     }
 }
 
-impl<'a> ops::Mul<i8> for Vec2 {
+impl ops::Mul<i8> for Vec2 {
     type Output = Vec2;
 
     fn mul(self, rhs: i8) -> Self::Output {
@@ -340,6 +340,12 @@ impl<P: Into<Pos2>> ops::IndexMut<P> for Abalone {
     fn index_mut(&mut self, index: P) -> &mut Self::Output {
         let Pos2 { x, y } = index.into();
         &mut self.balls[y as usize][x as usize]
+    }
+}
+
+impl Default for Abalone {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -726,5 +732,5 @@ impl Abalone {
 
 pub fn is_in_bounds(pos: impl Into<Pos2>) -> bool {
     let Pos2 { x, y } = pos.into();
-    x >= 0 && x < SIZE && y >= 0 && y < SIZE && x - y < 5 && y - x < 5
+    (0..SIZE).contains(&x) && (0..SIZE).contains(&y) && x - y < 5 && y - x < 5
 }

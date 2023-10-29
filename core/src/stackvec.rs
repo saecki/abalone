@@ -19,6 +19,12 @@ impl<const SIZE: usize, const SMALLER_OR_EQ_SIZE: usize, T: Sized> From<[T; SMAL
     }
 }
 
+impl<const SIZE: usize, T: Sized> Default for StackVec<SIZE, T> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl<const SIZE: usize, T: Sized> StackVec<SIZE, T> {
     pub fn new() -> Self {
         let buf = unsafe { MaybeUninit::uninit().assume_init() };
