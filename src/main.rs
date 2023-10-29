@@ -62,6 +62,10 @@ enum InputError {
         start: abalone::Pos2,
         end: abalone::Pos2,
     },
+    CantExtendSelection {
+        start_secs: f64,
+        pos: abalone::Pos2,
+    },
 }
 
 enum DragKind {
@@ -305,6 +309,9 @@ fn draw_game(ui: &mut Ui, app: &mut AbaloneApp, ctx: &Context) {
                 highlight_one(painter, ctx, start, ERROR_COLOR);
                 highlight_one(painter, ctx, end, ERROR_COLOR);
             }
+            &InputError::CantExtendSelection { pos, .. } => {
+                highlight_one(painter, ctx, pos, ERROR_COLOR);
+            }
         };
     }
 
@@ -435,6 +442,11 @@ fn check_input(i: &mut InputState, app: &mut AbaloneApp, ctx: &Context) {
                                             let error = app.game.check_selection(selection).err();
                                             app.state = State::Selection(selection, error);
                                         }
+                                    } else {
+                                        app.input_errors.push(InputError::CantExtendSelection {
+                                            start_secs: i.time,
+                                            pos,
+                                        });
                                     }
                                 }
                             }
@@ -549,8 +561,9 @@ fn check_input(i: &mut InputState, app: &mut AbaloneApp, ctx: &Context) {
 
     app.input_errors.retain(|e| {
         let start = match e {
-            InputError::WrongTurn { start_secs, .. } => start_secs,
-            InputError::InvalidSet { start_secs, .. } => start_secs,
+            InputError::WrongTurn { start_secs, .. }
+            | InputError::InvalidSet { start_secs, .. }
+            | InputError::CantExtendSelection { start_secs, .. } => start_secs,
         };
         start + ERROR_DISPLAY_TIME > i.time
     });
