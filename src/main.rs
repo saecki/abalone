@@ -316,8 +316,10 @@ fn check_input(i: &mut InputState, app: &mut AbaloneApp, ctx: &Context) {
                 } else {
                     match &app.state {
                         State::NoSelection => {
-                            let error = app.game.check_selection([pos; 2]).err();
-                            app.state = State::Selection([pos; 2], error)
+                            if abalone::is_in_bounds(pos) {
+                                let error = app.game.check_selection([pos; 2]).err();
+                                app.state = State::Selection([pos; 2], error)
+                            }
                         }
                         &State::Selection([start, end], _) => {
                             let sel_vec = end - start;
@@ -396,8 +398,14 @@ fn check_input(i: &mut InputState, app: &mut AbaloneApp, ctx: &Context) {
                     match &app.state {
                         State::NoSelection => {
                             // use the start position as selection if there is none
-                            app.state =
-                                try_move(&app.game, [start; 2], [start, end], [origin, current]);
+                            if abalone::is_in_bounds(start) {
+                                app.state = try_move(
+                                    &app.game,
+                                    [start; 2],
+                                    [start, end],
+                                    [origin, current],
+                                );
+                            }
                         }
                         State::Selection(selection, error) => {
                             if error.is_none() {
