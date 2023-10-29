@@ -4,11 +4,13 @@ use abalone::{Abalone, Color, Dir, SelectionError};
 use eframe::NativeOptions;
 use egui::{
     Align2, CentralPanel, Color32, FontFamily, FontId, Frame, Id, InputState, Key, Modifiers,
-    Painter, Pos2, Rect, Rounding, Stroke, Ui, Vec2,
+    Painter, Pos2, Rect, Rounding, Sense, Stroke, Ui, Vec2,
 };
 
 const BLACK_COLOR: Color32 = Color32::from_gray(0x02);
 const WHITE_COLOR: Color32 = Color32::from_gray(0xD0);
+const ICON_COLOR: Color32 = Color32::from_gray(0xC0);
+const ICON_DISABLED_COLOR: Color32 = Color32::from_gray(0x80);
 
 const SELECTION_COLOR: Color32 = Color32::from_rgb(0x40, 0x60, 0xE0);
 const SUCCESS_COLOR: Color32 = Color32::from_rgb(0x40, 0xF0, 0x60);
@@ -75,8 +77,8 @@ enum State {
 }
 
 struct Context {
+    screen_size: Vec2,
     center: Pos2,
-    board_size: f32,
     ball_offset: f32,
     ball_radius: f32,
     line_thickness: f32,
@@ -94,15 +96,16 @@ impl eframe::App for AbaloneApp {
                     * ctx.animate_bool_with_time(Id::new("board_angle"), self.board_flipped, 0.3);
 
                 let screen_size = ui.available_size();
-                let center = (0.5 * screen_size).to_pos2();
-                let board_size = screen_size.min_elem();
+                let center =
+                    (0.5 * screen_size).to_pos2() + Vec2::new(0.0, 0.05 * screen_size.min_elem());
+                let board_size = 0.95 * screen_size.min_elem();
                 let ball_offset = board_size / 9.0;
                 let ball_radius = 0.4 * ball_offset;
                 let line_thickness = 0.1 * ball_radius;
                 let selection_radius = ball_radius - 0.5 * line_thickness;
                 let ctx = Context {
+                    screen_size,
                     center,
-                    board_size,
                     ball_offset,
                     ball_radius,
                     line_thickness,
@@ -119,7 +122,7 @@ impl eframe::App for AbaloneApp {
     }
 }
 
-fn draw_game(ui: &mut Ui, app: &AbaloneApp, ctx: &Context) {
+fn draw_game(ui: &mut Ui, app: &mut AbaloneApp, ctx: &Context) {
     let painter = ui.painter();
 
     let mut black_score = abalone::NUM_STARTING_BALLS;
@@ -132,26 +135,64 @@ fn draw_game(ui: &mut Ui, app: &AbaloneApp, ctx: &Context) {
         }
     }
 
-    let board_rect = Rect::from_center_size(ctx.center, Vec2::splat(ctx.board_size));
+    let used_screen_size = Vec2::splat(ctx.screen_size.min_elem());
+    let used_screen_pos = (0.5 * (ctx.screen_size - used_screen_size)).to_pos2();
+    let used_screen_rect = Rect::from_min_size(used_screen_pos, used_screen_size);
+
     let padding = 0.2 * ctx.ball_offset;
-    let font = FontId::new(ctx.ball_offset, FontFamily::Proportional);
-    let black_score_pos = board_rect.right_top() + Vec2::new(-padding, padding);
+    let score_font = FontId::new(ctx.ball_offset, FontFamily::Proportional);
+    let black_score_pos = used_screen_rect.right_top() + Vec2::new(-padding, padding);
     painter.text(
         black_score_pos,
         Align2::RIGHT_TOP,
         black_score.to_string(),
-        font.clone(),
+        score_font.clone(),
         BLACK_COLOR,
     );
 
-    let white_score_pos = board_rect.left_top() + Vec2::new(padding, padding);
+    let white_score_pos = used_screen_rect.left_top() + Vec2::new(padding, padding);
     painter.text(
         white_score_pos,
         Align2::LEFT_TOP,
         white_score.to_string(),
-        font,
+        score_font,
         WHITE_COLOR,
     );
+
+    let icon_font = FontId::new(0.4 * ctx.ball_offset, FontFamily::Proportional);
+    let undo_pos = used_screen_rect.center_top() + Vec2::new(-padding, padding);
+    let color = if app.game.can_undo() {
+        ICON_COLOR
+    } else {
+        ICON_DISABLED_COLOR
+    };
+    let rect = painter.text(
+        undo_pos,
+        Align2::RIGHT_TOP,
+        "\u{2baa}".to_string(),
+        icon_font.clone(),
+        color,
+    );
+    if ui.interact(rect, Id::new("undo"), Sense::click()).clicked() {
+        app.game.undo_move();
+    }
+
+    let redo_pos = used_screen_rect.center_top() + Vec2::new(padding, padding);
+    let color = if app.game.can_redo() {
+        ICON_COLOR
+    } else {
+        ICON_DISABLED_COLOR
+    };
+    let rect = painter.text(
+        redo_pos,
+        Align2::LEFT_TOP,
+        "\u{2bab}".to_string(),
+        icon_font,
+        color,
+    );
+    if ui.interact(rect, Id::new("redo"), Sense::click()).clicked() {
+        app.game.redo_move();
+    }
 
     // balls
     for (x, y, val) in app.game.iter() {

@@ -605,6 +605,14 @@ impl Abalone {
         self.move_idx += 1;
     }
 
+    pub fn can_undo(&self) -> bool {
+        self.move_idx > 0
+    }
+
+    pub fn can_redo(&self) -> bool {
+        self.move_idx < self.moves.len()
+    }
+
     pub fn undo_move(&mut self) {
         if self.move_idx == 0 {
             return;
