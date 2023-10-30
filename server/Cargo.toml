@@ -1,0 +1,16 @@
+[package]
+name = "abalone_server"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+abalone_core = { workspace = true }
+serde = { workspace = true }
+serde_derive = { workspace = true }
+tokio = { version = "1.32.0", features = ["rt", "macros"] }
+axum = { version = "0.6.20", features = ["ws"] }
+axum-typed-websockets = { version = "0.5", features = ["json"] }
+futures-util = "0.3.28"
+async-channel = "2.0"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
