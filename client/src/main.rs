@@ -604,7 +604,7 @@ fn try_move(
         return State::Selection(selection, error);
     }
 
-    let angle = (6.0 * ((drag_vec.angle() + TAU) % TAU) / TAU).round();
+    let angle = (6.0 * ((drag_vec.angle() - ctx.board_angle + TAU) % TAU) / TAU).round();
     let idx = (angle as u8) % 6;
     let dir = match idx {
         0 => Dir::PosX,
