@@ -1,4 +1,4 @@
-use crate::{Abalone, Dir, Error, MoveError, Pos2, SelectionError, Success, Vec2};
+use crate::{Abalone, Dir, Error, MoveError, Pos2, SelectionError, Move, Vec2};
 
 struct CheckState {
     game: Abalone,
@@ -16,7 +16,7 @@ impl CheckState {
         first: impl Into<Pos2> + Copy,
         last: impl Into<Pos2> + Copy,
         dir: Dir,
-        expected: Result<Success, Error>,
+        expected: Result<Move, Error>,
     ) -> Self {
         let mut res = self.game.check_move([first.into(), last.into()], dir);
         if let Err(Error::Selection(SelectionError::WrongTurn(_))) = res {
@@ -57,7 +57,7 @@ fn smooth_operator() {
         (0, 0),
         (2, 2),
         Dir::PosZ,
-        Ok(Success::Moved {
+        Ok(Move::Moved {
             dir: Dir::PosZ,
             first: (0, 0).into(),
             last: (2, 2).into(),
@@ -88,7 +88,7 @@ fn sideward_move() {
         (2, 2),
         (4, 2),
         Dir::PosY,
-        Ok(Success::Moved {
+        Ok(Move::Moved {
             dir: Dir::PosY,
             first: (2, 2).into(),
             last: (4, 2).into(),

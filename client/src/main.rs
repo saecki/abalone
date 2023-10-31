@@ -95,7 +95,7 @@ enum State {
     #[default]
     NoSelection,
     Selection([abalone::Pos2; 2], Option<SelectionError>),
-    Move([abalone::Pos2; 2], Result<abalone::Success, abalone::Error>),
+    Move([abalone::Pos2; 2], Result<abalone::Move, abalone::Error>),
 }
 
 struct Context {
@@ -301,18 +301,18 @@ fn draw_game(ui: &mut Ui, app: &mut AbaloneApp, ctx: &Context) {
                         }
                     }
                 },
-                Ok(success) => match *success {
-                    abalone::Success::PushedOff { first, last } => {
+                Ok(mov) => match *mov {
+                    abalone::Move::PushedOff { first, last } => {
                         let norm = (last - first).norm();
                         let selection = [first + norm, last];
                         highlight_selection(painter, ctx, selection, SUCCESS_COLOR)
                     }
-                    abalone::Success::PushedAway { first, last } => {
+                    abalone::Move::PushedAway { first, last } => {
                         let norm = (last - first).norm();
                         let selection = [first + norm, last + norm];
                         highlight_selection(painter, ctx, selection, SUCCESS_COLOR)
                     }
-                    abalone::Success::Moved { dir, first, last } => {
+                    abalone::Move::Moved { dir, first, last } => {
                         let selection = [first + dir.vec(), last + dir.vec()];
                         highlight_selection(painter, ctx, selection, SUCCESS_COLOR)
                     }
@@ -559,8 +559,8 @@ fn check_input(i: &mut InputState, app: &mut AbaloneApp, ctx: &Context) {
                 }
                 State::Move(selection, res) => {
                     app.state = match res {
-                        Ok(success) => {
-                            app.game.submit_move(*success);
+                        Ok(mov) => {
+                            app.game.submit_move(*mov);
                             State::NoSelection
                         }
                         Err(_) => State::Selection(*selection, None),

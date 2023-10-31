@@ -5,6 +5,7 @@ use serde_derive::{Deserialize, Serialize};
 use crate::stackvec::StackVec;
 
 pub mod stackvec;
+pub mod dto;
 #[cfg(test)]
 mod test;
 
@@ -17,7 +18,7 @@ const UNIT_Z: Vec2 = Vec2 { x: 1, y: 1 };
 const SIZE: i8 = 9;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub enum Success {
+pub enum Move {
     /// Pushed opposing color, off the board.
     PushedOff {
         /// First ball that was pushed.
@@ -302,7 +303,7 @@ impl Dir {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Abalone {
     pub balls: [[Option<Color>; SIZE as usize]; SIZE as usize],
-    pub moves: Vec<Success>,
+    pub moves: Vec<Move>,
     pub move_idx: usize,
     pub turn: Color,
 }
@@ -443,7 +444,7 @@ impl Abalone {
         Err(SelectionError::NoPossibleMove)
     }
 
-    pub fn check_move(&self, [mut first, mut last]: [Pos2; 2], dir: Dir) -> Result<Success, Error> {
+    pub fn check_move(&self, [mut first, mut last]: [Pos2; 2], dir: Dir) -> Result<Move, Error> {
         if let Some(&Some(color)) = self.get(first) {
             if color != self.turn {
                 return Err(SelectionError::WrongTurn(first).into());
@@ -514,7 +515,7 @@ impl Abalone {
                     }
                     Some(None) => {
                         let last = first + dir.vec() * (force - 1);
-                        return Ok(Success::Moved { dir, first, last });
+                        return Ok(Move::Moved { dir, first, last });
                     }
                     None => {
                         let last = first + dir.vec() * (force - 1);
@@ -552,11 +553,11 @@ impl Abalone {
                     }
                     Some(None) => {
                         let last = opposing_first + dir.vec() * (opposing_force - 1);
-                        return Ok(Success::PushedAway { first, last });
+                        return Ok(Move::PushedAway { first, last });
                     }
                     None => {
                         let last = opposing_first + dir.vec() * (opposing_force - 1);
-                        return Ok(Success::PushedOff { first, last });
+                        return Ok(Move::PushedOff { first, last });
                     }
                 }
             }
@@ -604,16 +605,16 @@ impl Abalone {
                 return Err(MoveError::PushedOff(pushed_off).into());
             }
 
-            Ok(Success::Moved { dir, first, last })
+            Ok(Move::Moved { dir, first, last })
         }
     }
 
-    pub fn submit_move(&mut self, success: Success) {
-        self.apply_move(success);
+    pub fn submit_move(&mut self, mov: Move) {
+        self.apply_move(mov);
 
         self.turn = self.turn.opposite();
         self.moves.drain(self.move_idx..);
-        self.moves.push(success);
+        self.moves.push(mov);
         self.move_idx += 1;
     }
 
@@ -632,8 +633,8 @@ impl Abalone {
 
         self.turn = self.turn.opposite();
         self.move_idx -= 1;
-        let success = self.moves[self.move_idx];
-        self.unapply_move(success);
+        let mov = self.moves[self.move_idx];
+        self.unapply_move(mov);
     }
 
     pub fn redo_move(&mut self) {
@@ -642,14 +643,14 @@ impl Abalone {
         }
 
         self.turn = self.turn.opposite();
-        let success = self.moves[self.move_idx];
+        let mov = self.moves[self.move_idx];
         self.move_idx += 1;
-        self.apply_move(success)
+        self.apply_move(mov)
     }
 
-    fn apply_move(&mut self, success: Success) {
-        match success {
-            Success::PushedOff { first, last } => {
+    fn apply_move(&mut self, mov: Move) {
+        match mov {
+            Move::PushedOff { first, last } => {
                 let vec = last - first;
                 let num = vec.mag();
                 let norm = vec.norm();
@@ -661,7 +662,7 @@ impl Abalone {
                 }
                 self[first] = None;
             }
-            Success::PushedAway { first, last } => {
+            Move::PushedAway { first, last } => {
                 let vec = last - first;
                 let num = vec.mag();
                 let norm = vec.norm();
@@ -673,7 +674,7 @@ impl Abalone {
                 }
                 self[first] = None;
             }
-            Success::Moved { dir, first, last } => {
+            Move::Moved { dir, first, last } => {
                 let vec = last - first;
                 let num = vec.mag();
                 let norm = vec.norm();
@@ -688,9 +689,9 @@ impl Abalone {
         }
     }
 
-    fn unapply_move(&mut self, success: Success) {
-        match success {
-            Success::PushedOff { first, last } => {
+    fn unapply_move(&mut self, mov: Move) {
+        match mov {
+            Move::PushedOff { first, last } => {
                 let vec = last - first;
                 let num = vec.mag();
                 let norm = vec.norm();
@@ -702,7 +703,7 @@ impl Abalone {
                 }
                 self[last] = self[first].map(|c| c.opposite());
             }
-            Success::PushedAway { first, last } => {
+            Move::PushedAway { first, last } => {
                 let vec = last - first;
                 let num = vec.mag();
                 let norm = vec.norm();
@@ -714,7 +715,7 @@ impl Abalone {
                 }
                 self[last + norm] = None;
             }
-            Success::Moved { dir, first, last } => {
+            Move::Moved { dir, first, last } => {
                 let vec = last - first;
                 let num = vec.mag();
                 let norm = vec.norm();
