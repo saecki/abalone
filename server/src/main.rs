@@ -15,6 +15,10 @@ use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
 
 use abalone_core::dto::{ClientMsg, RoomId, ServerMsg, TransactionId};
+use uuid::Uuid;
+
+#[cfg(test)]
+mod test;
 
 #[derive(Clone, Debug)]
 struct AppState {
@@ -43,12 +47,10 @@ struct Room {
 #[derive(Clone, Debug)]
 struct PlayerSession {
     sender: Sender<ServerMsg>,
-    receiver: Receiver<ServerMsg>,
 }
 
 #[derive(Clone, Debug)]
 struct JoinRoomTransaction {
-    transaction_id: TransactionId,
     /// The player that requested to join the room.
     player: PlayerSession,
 }
@@ -89,12 +91,11 @@ async fn ws_handler(
 async fn handle_socket(state: Arc<RwLock<AppState>>, socket: WebSocket<ServerMsg, ClientMsg>) {
     let (socket_sender, socket_receiver) = socket.split();
     let (session_sender, session_receiver) = async_channel::unbounded();
-    tokio::spawn(send_messages(socket_sender, session_receiver.clone()));
+    tokio::spawn(sender_task(socket_sender, session_receiver));
     let session = PlayerSession {
         sender: session_sender,
-        receiver: session_receiver,
     };
-    tokio::spawn(receive_messages(state, socket_receiver, session));
+    tokio::spawn(receiver_task(state, socket_receiver, session));
 }
 
 struct RoomState {
@@ -104,12 +105,12 @@ struct RoomState {
     room: Arc<RwLock<Room>>,
 }
 
-async fn receive_messages(
+async fn receiver_task(
     state: Arc<RwLock<AppState>>,
     mut socket: SplitStream<WebSocket<ServerMsg, ClientMsg>>,
     session: PlayerSession,
 ) {
-    let mut room = None;
+    let mut room: Option<RoomState> = None;
 
     'session: loop {
         let Some(msg) = socket.next().await else {
@@ -129,7 +130,12 @@ async fn receive_messages(
             // ignore
             Message::Ping(_) | Message::Pong(_) => continue 'session,
             // TODO: if the client was in a room, notify the opponent
-            Message::Close(_) => return,
+            Message::Close(_) => {
+                if let Some(r) = room {
+                    leave_room(&state, &r).await;
+                }
+                return;
+            }
         };
 
         match msg {
@@ -155,10 +161,7 @@ async fn receive_messages(
                     room: new_room,
                 });
 
-                let res = session.sender.send(ServerMsg::Sync(dto)).await;
-                if let Err(e) = res {
-                    tracing::error!("Error sending message {}", e);
-                }
+                send_msg(&session.sender, ServerMsg::Sync(dto)).await;
             }
             ClientMsg::ListRooms => {
                 let state_lock = state.read().await;
@@ -171,41 +174,98 @@ async fn receive_messages(
                     }
                 }
 
-                let res = session.sender.send(ServerMsg::OpenRooms(open_rooms)).await;
-                if let Err(e) = res {
-                    tracing::error!("Error sending message {}", e);
-                }
+                send_msg(&session.sender, ServerMsg::OpenRooms(open_rooms)).await;
             }
-            ClientMsg::Sync => todo!("send a sync message back"),
+            ClientMsg::Sync => {
+                let msg = match &room {
+                    Some(r) => {
+                        let room_lock = r.room.read().await;
+                        let dto = dto::Room::from(&*room_lock);
+                        ServerMsg::Sync(dto)
+                    }
+                    None => ServerMsg::SyncEmpty,
+                };
+                send_msg(&session.sender, msg).await;
+            }
             ClientMsg::RequestJoinRoom(room_id) => {
                 if let Some(r) = &room {
                     let id = r.room.read().await.id;
-                    let error = format!("Already inside room with id {id:?}");
-                    let res = session.sender.send(ServerMsg::Error(error)).await;
-                    if let Err(e) = res {
-                        tracing::error!("Error sending message {}", e);
-                    }
+                    let error = format!("Already inside room with id {id}");
+                    send_msg(&session.sender, ServerMsg::Error(error)).await;
                     continue 'session;
                 }
+
+                let state_lock = state.read().await;
+                let Some(open_room) = state_lock.rooms.get(&room_id) else {
+                    let error = format!("Room with id {room_id} not found");
+                    send_msg(&session.sender, ServerMsg::Error(error)).await;
+                    continue 'session;
+                };
+
+                let mut room_lock = open_room.write().await;
+                let mut other_player = None;
+                for p in room_lock.players.iter().filter_map(|p| p.as_ref()) {
+                    if other_player.is_some() {
+                        let error = format!("Room with id {room_id} is empty");
+                        send_msg(&session.sender, ServerMsg::Error(error)).await;
+                        continue 'session;
+                    }
+
+                    other_player = Some(p.clone());
+                }
+                let Some(other_player) = other_player else {
+                    let error = format!("Room with id {room_id} is empty");
+                    send_msg(&session.sender, ServerMsg::Error(error)).await;
+                    continue 'session;
+                };
+
+                let transaction_id = TransactionId(Uuid::new_v4());
+                let transaction = JoinRoomTransaction {
+                    player: session.clone(),
+                };
+                room_lock.transactions.insert(transaction_id, transaction);
+
+                let msg = ServerMsg::JoinRoomRequested(transaction_id);
+                send_msg(&other_player.sender, msg).await;
             }
             ClientMsg::AllowJoinRoom(transaction_id) => {
                 let Some(r) = &mut room else {
                     let error = format!("Not inside a room");
-                    let res = session.sender.send(ServerMsg::Error(error)).await;
-                    if let Err(e) = res {
-                        tracing::error!("Error sending message {}", e);
-                    }
+                    send_msg(&session.sender, ServerMsg::Error(error)).await;
                     continue 'session;
                 };
-                let mut room_lock = r.room.write().await;
+                let room_lock = r.room.read().await;
 
                 // TODO: check if other player is still connected
-                let transaction = room_lock.transactions.get(&transaction_id) else {
+                let Some(transaction) = room_lock.transactions.get(&transaction_id) else {
                     let error = format!("Transaction with id {transaction_id} not found");
-                    let res = session.sender.send(ServerMsg::Error(error)).await;
-                    if let Err(e) = res {
-                        tracing::error!("Error sending message {}", e);
-                    }
+                    send_msg(&session.sender, ServerMsg::Error(error)).await;
+                    continue 'session;
+                };
+
+                let dto = dto::OpenRoom::from(&*room_lock);
+                let msg = ServerMsg::JoinRoomAllowed(dto, transaction_id);
+                send_msg(&transaction.player.sender, msg).await;
+            }
+            ClientMsg::JoinRoom(room_id, transaction_id) => {
+                if let Some(r) = &room {
+                    let id = r.room.read().await.id;
+                    let error = format!("Already inside room with id {id}");
+                    send_msg(&session.sender, ServerMsg::Error(error)).await;
+                    continue 'session;
+                }
+
+                let state_lock = state.read().await;
+                let Some(open_room) = state_lock.rooms.get(&room_id) else {
+                    let error = format!("Room with id {room_id} not found");
+                    send_msg(&session.sender, ServerMsg::Error(error)).await;
+                    continue 'session;
+                };
+                let mut room_lock = open_room.write().await;
+
+                if room_lock.transactions.get(&transaction_id).is_none() {
+                    let error = format!("Transaction with id {transaction_id} not found");
+                    send_msg(&session.sender, ServerMsg::Error(error)).await;
                     continue 'session;
                 };
 
@@ -214,78 +274,37 @@ async fn receive_messages(
                 } else if room_lock.players[1].is_none() {
                     1
                 } else {
-                    let error = format!("Room with id {:?} is full", room_lock.id);
-                    let res = session.sender.send(ServerMsg::Error(error)).await;
-                    if let Err(e) = res {
-                        tracing::error!("Error sending message {}", e);
-                    }
+                    let error = format!("Room with id {room_id} is full");
+                    send_msg(&session.sender, ServerMsg::Error(error)).await;
                     continue 'session;
                 };
                 room_lock.players[player_idx] = Some(session.clone());
                 room = Some(RoomState {
                     player_idx,
-                    room: Arc::clone(r),
+                    room: Arc::clone(open_room),
                 });
 
                 for p in room_lock.players.iter().filter_map(|p| p.as_ref()) {
                     let dto = dto::Room::from(&*room_lock);
-                    let res = p.sender.send(ServerMsg::Sync(dto)).await;
-                    if let Err(e) = res {
-                        tracing::error!("Error sending message {}", e);
-                    }
+                    send_msg(&p.sender, ServerMsg::Sync(dto)).await;
                 }
             }
             ClientMsg::LeaveRoom => {
                 let Some(r) = &room else {
                     let error = format!("Not inside a room");
-                    let res = session.sender.send(ServerMsg::Error(error)).await;
-                    if let Err(e) = res {
-                        tracing::error!("Error sending message {}", e);
-                    }
+                    send_msg(&session.sender, ServerMsg::Error(error)).await;
                     continue 'session;
                 };
 
-                {
-                    let mut room_lock = r.room.write().await;
-                    room_lock.players[r.player_idx] = None;
-
-                    // notify other players
-                    let mut num_others = 0;
-                    for (i, p) in room_lock.players.iter().enumerate() {
-                        if i == r.player_idx {
-                            continue;
-                        }
-                        let Some(p) = p else { continue };
-
-                        let dto = dto::Room::from(&*room_lock);
-                        let res = p.sender.send(ServerMsg::Sync(dto)).await;
-                        if let Err(e) = res {
-                            tracing::error!("Error sending message {}", e);
-                        }
-
-                        num_others += 1;
-                    }
-
-                    // delete room if it's empty
-                    if num_others == 0 {
-                        let mut state_lock = state.write().await;
-                        state_lock.rooms.remove(&room_lock.id);
-                    }
-                }
+                leave_room(&state, &r).await;
 
                 room = None;
-                let res = session.sender.send(ServerMsg::SyncEmpty).await;
-                if let Err(e) = res {
-                    tracing::error!("Error sending message {}", e);
-                }
+                send_msg(&session.sender, ServerMsg::SyncEmpty).await;
             }
             ClientMsg::MakeMove { first, last, dir } => {
                 let Some(r) = &room else {
                     let error = format!("Not inside a room");
-                    let res = session.sender.send(ServerMsg::Error(error)).await;
-                    if let Err(e) = res {
-                        tracing::error!("Error sending message {}", e);
-                    }
+                    send_msg(&session.sender, ServerMsg::Error(error)).await;
                     continue 'session;
                 };
 
@@ -295,16 +314,14 @@ async fn receive_messages(
                     Ok(m) => {
                         room_lock.game.submit_move(m);
 
-                        for p in room_lock.players.iter() {
-                            let Some(p) = p else { continue };
-
-                            let res = p.sender.send(ServerMsg::AppliedMove(m)).await;
-                            if let Err(e) = res {
-                                tracing::error!("Error sending message {}", e);
-                            }
+                        for p in room_lock.players.iter().filter_map(|p| p.as_ref()) {
+                            send_msg(&p.sender, ServerMsg::AppliedMove(m)).await;
                         }
                     }
-                    Err(_) => todo!(),
+                    Err(e) => {
+                        let error = format!("Invalid move: {e}");
+                        send_msg(&session.sender, ServerMsg::Error(error)).await;
+                    }
                 }
             }
             ClientMsg::RequestUndo => todo!(),
@@ -313,7 +330,7 @@ async fn receive_messages(
     }
 }
 
-async fn send_messages(
+async fn sender_task(
     mut socket: SplitSink<WebSocket<ServerMsg, ClientMsg>, Message<ServerMsg>>,
     session: Receiver<ServerMsg>,
 ) {
@@ -323,9 +340,41 @@ async fn send_messages(
         };
 
         let res = socket.send(Message::Item(msg)).await;
-        if let Err(e) = res {
+        if let Err(_e) = res {
             todo!();
         }
+    }
+}
+
+async fn leave_room(state: &Arc<RwLock<AppState>>, room: &RoomState) {
+    let mut room_lock = room.room.write().await;
+    room_lock.players[room.player_idx] = None;
+
+    // notify other players
+    let mut num_others = 0;
+    for (i, p) in room_lock.players.iter().enumerate() {
+        if i == room.player_idx {
+            continue;
+        }
+        let Some(p) = p else { continue };
+
+        let dto = dto::Room::from(&*room_lock);
+        send_msg(&p.sender, ServerMsg::Sync(dto)).await;
+
+        num_others += 1;
+    }
+
+    // delete room if it's empty
+    if num_others == 0 {
+        let mut state_lock = state.write().await;
+        state_lock.rooms.remove(&room_lock.id);
+    }
+}
+
+async fn send_msg(sender: &Sender<ServerMsg>, msg: ServerMsg) {
+    let res = sender.send(msg).await;
+    if let Err(e) = res {
+        tracing::error!("Error sending message {}", e);
     }
 }
 

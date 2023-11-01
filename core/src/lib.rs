@@ -4,8 +4,8 @@ use serde_derive::{Deserialize, Serialize};
 
 use crate::stackvec::StackVec;
 
-pub mod stackvec;
 pub mod dto;
+pub mod stackvec;
 #[cfg(test)]
 mod test;
 
@@ -49,6 +49,15 @@ pub enum Error {
     Move(MoveError),
 }
 
+impl std::fmt::Display for Error {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Error::Selection(e) => write!(f, "Selection error: {e}"),
+            Error::Move(e) => write!(f, "Move error: {e}"),
+        }
+    }
+}
+
 impl From<SelectionError> for Error {
     fn from(value: SelectionError) -> Self {
         Self::Selection(value)
@@ -79,6 +88,31 @@ pub enum SelectionError {
     NoPossibleMove,
 }
 
+impl std::fmt::Display for SelectionError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            SelectionError::WrongTurn(p) => write!(f, "Wrong turn at {p}"),
+            SelectionError::InvalidSet => write!(f, "Invalid set"),
+            SelectionError::MixedSet(mixed_set) => {
+                write!(f, "Mixed set:")?;
+                for p in mixed_set.iter() {
+                    write!(f, " {p}")?;
+                }
+                Ok(())
+            }
+            SelectionError::NotABall(no_ball) => {
+                write!(f, "Not a ball:")?;
+                for p in no_ball.iter() {
+                    write!(f, " {p}")?;
+                }
+                Ok(())
+            }
+            SelectionError::TooMany => write!(f, "Too many"),
+            SelectionError::NoPossibleMove => write!(f, "No possible move"),
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum MoveError {
     /// Would push off your own ball.
@@ -102,6 +136,34 @@ pub enum MoveError {
     },
     /// Field isn't free, only for sideward motion.
     NotFree(StackVec<3, Pos2>),
+}
+
+impl std::fmt::Display for MoveError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            MoveError::PushedOff(pushed_off) => {
+                write!(f, "Pushed off:")?;
+                for p in pushed_off.iter() {
+                    write!(f, " {p}")?;
+                }
+                Ok(())
+            }
+            MoveError::BlockedByOwn(p) => write!(f, "Blocked by own ball at {p}"),
+            MoveError::TooManyInferred { first, last } => {
+                write!(f, "Too many own balls in the push direction {first} {last}")
+            }
+            MoveError::TooManyOpposing { first, last } => {
+                write!(f, "Too many opposing balls {first} {last}")
+            }
+            MoveError::NotFree(not_free) => {
+                write!(f, "Blocked by:")?;
+                for p in not_free.iter() {
+                    write!(f, " {p}")?;
+                }
+                Ok(())
+            }
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize, Serialize)]
@@ -140,6 +202,13 @@ impl Color {
 pub struct Pos2 {
     pub x: i8,
     pub y: i8,
+}
+
+impl std::fmt::Display for Pos2 {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let Self { x, y } = self;
+        write!(f, "({x}, {y})")
+    }
 }
 
 impl ops::Add<Vec2> for Pos2 {

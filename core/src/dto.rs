@@ -10,8 +10,10 @@ pub enum ClientMsg {
     ListRooms,
     /// Request to join the room.
     RequestJoinRoom(RoomId),
-    /// Allow the opponent to undo the last move.
+    /// Allow someone to join the room.
     AllowJoinRoom(TransactionId),
+    /// Allow someone to join the room.
+    JoinRoom(RoomId, TransactionId),
     /// Leave a room.
     LeaveRoom,
     /// Request a sync message from the server.
@@ -28,8 +30,10 @@ pub enum ClientMsg {
 pub enum ServerMsg {
     /// List of open rooms.
     OpenRooms(Vec<OpenRoom>),
-    /// Someone requested to join the room
+    /// Someone requested to join the room.
     JoinRoomRequested(TransactionId),
+    /// Someone allowed you to join their room.
+    JoinRoomAllowed(OpenRoom, TransactionId),
     /// Synchronize game state.
     Sync(Room),
     /// Synchronize game state, but there isn't any.
@@ -42,6 +46,7 @@ pub enum ServerMsg {
     Error(String),
 }
 
+// TODO: include some information about the players, like a login name
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Room {
     pub id: RoomId,
@@ -55,7 +60,7 @@ pub struct OpenRoom {
     pub name: String,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub struct TransactionId(pub uuid::Uuid);
 
 impl std::fmt::Display for TransactionId {
@@ -66,3 +71,9 @@ impl std::fmt::Display for TransactionId {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub struct RoomId(pub u64);
+
+impl std::fmt::Display for RoomId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.0.fmt(f)
+    }
+}
