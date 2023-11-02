@@ -274,7 +274,7 @@ async fn receiver_task(
                     send_msg(&session.sender, ServerMsg::Error(error)).await;
                     continue 'session;
                 };
-                let room_lock = r.room.read().await;
+                let mut room_lock = r.room.write().await;
 
                 let Some(transaction) = room_lock.transactions.get(&transaction_id) else {
                     let error = format!("Transaction with id {transaction_id} not found");
@@ -283,6 +283,8 @@ async fn receiver_task(
                 };
 
                 if transaction.player.sender.is_closed() {
+                    room_lock.transactions.remove(&transaction_id);
+
                     let error = format!("Player already disconnected");
                     send_msg(&session.sender, ServerMsg::Error(error)).await;
                     continue 'session;
