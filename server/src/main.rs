@@ -129,12 +129,30 @@ async fn receiver_task(
 
     'session: loop {
         let Some(msg) = socket.next().await else {
+            if let Some(r) = room {
+                tracing::debug!(
+                    "Connection closed by user \"{}\" with id {}",
+                    session.username,
+                    session.user_id
+                );
+                leave_room(&state, &r).await;
+            }
             return;
         };
 
         let msg = match msg {
             Ok(m) => m,
-            Err(axum_typed_websockets::Error::Ws(_)) => return,
+            Err(axum_typed_websockets::Error::Ws(_)) => {
+                if let Some(r) = room {
+                    tracing::debug!(
+                        "Connection error: user \"{}\" with id {}",
+                        session.username,
+                        session.user_id
+                    );
+                    leave_room(&state, &r).await;
+                }
+                return;
+            }
             Err(axum_typed_websockets::Error::Codec(e)) => {
                 let error = format!("Invalid message format: {e}");
                 send_msg(&session.sender, ServerMsg::Error(error)).await;
@@ -148,6 +166,11 @@ async fn receiver_task(
             Message::Ping(_) | Message::Pong(_) => continue 'session,
             Message::Close(_) => {
                 if let Some(r) = room {
+                    tracing::debug!(
+                        "Connection closed by user \"{}\" with id {}",
+                        session.username,
+                        session.user_id
+                    );
                     leave_room(&state, &r).await;
                 }
                 return;
