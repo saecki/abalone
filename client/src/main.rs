@@ -98,7 +98,7 @@ enum State {
     Move([abalone::Pos2; 2], Result<abalone::Move, abalone::Error>),
 }
 
-struct Context {
+struct Dimensions {
     screen_size: Vec2,
     center: Pos2,
     ball_offset: f32,
@@ -117,38 +117,42 @@ impl eframe::App for AbaloneApp {
         CentralPanel::default()
             .frame(Frame::none().fill(Color32::from_gray(0x2B)))
             .show(ctx, |ui| {
-                // TODO: fix animation snapping when changing direction while animation is still in progress.
-                let board_angle = PI
-                    * ctx.animate_bool_with_time(Id::new("board_angle"), self.board_flipped, 0.3);
-
-                let screen_size = ui.available_size();
-                let center =
-                    (0.5 * screen_size).to_pos2() + Vec2::new(0.0, 0.05 * screen_size.min_elem());
-                let board_size = 0.95 * screen_size.min_elem();
-                let ball_offset = board_size / 9.0;
-                let ball_radius = 0.4 * ball_offset;
-                let line_thickness = 0.1 * ball_radius;
-                let selection_radius = ball_radius - 0.5 * line_thickness;
-                let ctx = Context {
-                    screen_size,
-                    center,
-                    ball_offset,
-                    ball_radius,
-                    line_thickness,
-                    selection_radius,
-                    board_angle,
-                };
-
-                ui.input_mut(|i| {
-                    check_input(i, self, &ctx);
-                });
-
-                draw_game(ui, self, &ctx);
+                draw_game(ui, self);
             });
     }
 }
 
-fn draw_game(ui: &mut Ui, app: &mut AbaloneApp, ctx: &Context) {
+fn draw_game(ui: &mut Ui, app: &mut AbaloneApp) {
+    // TODO: fix animation snapping when changing direction while animation is still in progress.
+    let board_angle = PI
+        * ui.ctx()
+            .animate_bool_with_time(Id::new("board_angle"), app.board_flipped, 0.3);
+
+    let screen_size = ui.available_size();
+    let center = (0.5 * screen_size).to_pos2() + Vec2::new(0.0, 0.05 * screen_size.min_elem());
+    let board_size = 0.95 * screen_size.min_elem();
+    let ball_offset = board_size / 9.0;
+    let ball_radius = 0.4 * ball_offset;
+    let line_thickness = 0.1 * ball_radius;
+    let selection_radius = ball_radius - 0.5 * line_thickness;
+    let dim = Dimensions {
+        screen_size,
+        center,
+        ball_offset,
+        ball_radius,
+        line_thickness,
+        selection_radius,
+        board_angle,
+    };
+
+    ui.input_mut(|i| {
+        check_input(i, app, &dim);
+    });
+
+    draw_board(ui, app, &dim);
+}
+
+fn draw_board(ui: &mut Ui, app: &mut AbaloneApp, dim: &Dimensions) {
     let painter = ui.painter();
 
     let mut black_score = abalone::NUM_STARTING_BALLS;
@@ -161,12 +165,12 @@ fn draw_game(ui: &mut Ui, app: &mut AbaloneApp, ctx: &Context) {
         }
     }
 
-    let used_screen_size = Vec2::splat(ctx.screen_size.min_elem());
-    let used_screen_pos = (0.5 * (ctx.screen_size - used_screen_size)).to_pos2();
+    let used_screen_size = Vec2::splat(dim.screen_size.min_elem());
+    let used_screen_pos = (0.5 * (dim.screen_size - used_screen_size)).to_pos2();
     let used_screen_rect = Rect::from_min_size(used_screen_pos, used_screen_size);
 
-    let padding = 0.2 * ctx.ball_offset;
-    let score_font = FontId::new(ctx.ball_offset, FontFamily::Proportional);
+    let padding = 0.2 * dim.ball_offset;
+    let score_font = FontId::new(dim.ball_offset, FontFamily::Proportional);
     let black_score_pos = used_screen_rect.right_top() + Vec2::new(-padding, padding);
     painter.text(
         black_score_pos,
@@ -185,7 +189,7 @@ fn draw_game(ui: &mut Ui, app: &mut AbaloneApp, ctx: &Context) {
         WHITE_COLOR,
     );
 
-    let icon_font = FontId::new(0.4 * ctx.ball_offset, FontFamily::Proportional);
+    let icon_font = FontId::new(0.4 * dim.ball_offset, FontFamily::Proportional);
     let undo_pos = used_screen_rect.center_top() + Vec2::new(-padding, padding);
     let color = if app.game.can_undo() {
         ICON_COLOR
@@ -222,17 +226,17 @@ fn draw_game(ui: &mut Ui, app: &mut AbaloneApp, ctx: &Context) {
 
     // balls
     for (x, y, val) in app.game.iter() {
-        let pos = game_to_screen_pos(ctx, (x, y).into());
+        let pos = game_to_screen_pos(dim, (x, y).into());
         match val {
             Some(Color::Black) => {
-                painter.circle_filled(pos, ctx.ball_radius, BLACK_COLOR);
+                painter.circle_filled(pos, dim.ball_radius, BLACK_COLOR);
             }
             Some(Color::White) => {
-                painter.circle_filled(pos, ctx.ball_radius, WHITE_COLOR);
+                painter.circle_filled(pos, dim.ball_radius, WHITE_COLOR);
             }
             None => {
-                let stroke = Stroke::new(ctx.line_thickness, Color32::from_gray(0x80));
-                painter.circle_stroke(pos, ctx.selection_radius, stroke);
+                let stroke = Stroke::new(dim.line_thickness, Color32::from_gray(0x80));
+                painter.circle_stroke(pos, dim.selection_radius, stroke);
             }
         }
     }
@@ -242,62 +246,62 @@ fn draw_game(ui: &mut Ui, app: &mut AbaloneApp, ctx: &Context) {
         State::NoSelection => (),
         State::Selection(selection, error) => match error {
             &Some(SelectionError::WrongTurn(p)) => {
-                highlight_one_square(painter, ctx, p, ERROR_COLOR);
+                highlight_one_square(painter, dim, p, ERROR_COLOR);
 
                 let [start, end] = *selection;
                 if start != end {
-                    highlight_one(painter, ctx, end, ERROR_COLOR);
+                    highlight_one(painter, dim, end, ERROR_COLOR);
                 }
             }
             Some(SelectionError::InvalidSet) => {
                 let [start, end] = *selection;
-                highlight_one(painter, ctx, start, ERROR_COLOR);
-                highlight_one(painter, ctx, end, ERROR_COLOR);
+                highlight_one(painter, dim, start, ERROR_COLOR);
+                highlight_one(painter, dim, end, ERROR_COLOR);
             }
             Some(SelectionError::MixedSet(mixed)) => {
-                highlight_selection(painter, ctx, *selection, SELECTION_COLOR);
+                highlight_selection(painter, dim, *selection, SELECTION_COLOR);
                 for &p in mixed.iter() {
-                    highlight_one(painter, ctx, p, ERROR_COLOR);
+                    highlight_one(painter, dim, p, ERROR_COLOR);
                 }
             }
             Some(SelectionError::NotABall(no_ball)) => {
-                highlight_selection(painter, ctx, *selection, SELECTION_COLOR);
+                highlight_selection(painter, dim, *selection, SELECTION_COLOR);
                 for &p in no_ball.iter() {
-                    highlight_one(painter, ctx, p, ERROR_COLOR);
+                    highlight_one(painter, dim, p, ERROR_COLOR);
                 }
             }
             Some(SelectionError::TooMany) => {
-                highlight_selection(painter, ctx, *selection, ERROR_COLOR);
+                highlight_selection(painter, dim, *selection, ERROR_COLOR);
             }
             Some(SelectionError::NoPossibleMove) => {
-                highlight_selection(painter, ctx, *selection, WARN_COLOR);
+                highlight_selection(painter, dim, *selection, WARN_COLOR);
             }
             None => {
-                highlight_selection(painter, ctx, *selection, SELECTION_COLOR);
+                highlight_selection(painter, dim, *selection, SELECTION_COLOR);
             }
         },
         State::Move(selection, res) => {
-            highlight_selection(painter, ctx, *selection, SELECTION_COLOR);
+            highlight_selection(painter, dim, *selection, SELECTION_COLOR);
             match res {
                 Err(abalone::Error::Selection(_)) => (),
                 Err(abalone::Error::Move(e)) => match e {
                     abalone::MoveError::PushedOff(pushed_off) => {
                         for &p in pushed_off.iter() {
-                            highlight_one(painter, ctx, p, ERROR_COLOR);
+                            highlight_one(painter, dim, p, ERROR_COLOR);
                         }
                     }
                     &abalone::MoveError::BlockedByOwn(p) => {
-                        highlight_one(painter, ctx, p, ERROR_COLOR);
+                        highlight_one(painter, dim, p, ERROR_COLOR);
                     }
                     &abalone::MoveError::TooManyInferred { first, last } => {
-                        highlight_selection(painter, ctx, [first, last], ERROR_COLOR);
+                        highlight_selection(painter, dim, [first, last], ERROR_COLOR);
                     }
                     &abalone::MoveError::TooManyOpposing { first, last } => {
-                        highlight_selection(painter, ctx, [first, last], ERROR_COLOR);
+                        highlight_selection(painter, dim, [first, last], ERROR_COLOR);
                     }
                     abalone::MoveError::NotFree(not_free) => {
                         for &p in not_free.iter() {
-                            highlight_one(painter, ctx, p, ERROR_COLOR);
+                            highlight_one(painter, dim, p, ERROR_COLOR);
                         }
                     }
                 },
@@ -305,16 +309,16 @@ fn draw_game(ui: &mut Ui, app: &mut AbaloneApp, ctx: &Context) {
                     abalone::Move::PushedOff { first, last } => {
                         let norm = (last - first).norm();
                         let selection = [first + norm, last];
-                        highlight_selection(painter, ctx, selection, SUCCESS_COLOR)
+                        highlight_selection(painter, dim, selection, SUCCESS_COLOR)
                     }
                     abalone::Move::PushedAway { first, last } => {
                         let norm = (last - first).norm();
                         let selection = [first + norm, last + norm];
-                        highlight_selection(painter, ctx, selection, SUCCESS_COLOR)
+                        highlight_selection(painter, dim, selection, SUCCESS_COLOR)
                     }
                     abalone::Move::Moved { dir, first, last } => {
                         let selection = [first + dir.vec(), last + dir.vec()];
-                        highlight_selection(painter, ctx, selection, SUCCESS_COLOR)
+                        highlight_selection(painter, dim, selection, SUCCESS_COLOR)
                     }
                 },
             }
@@ -327,14 +331,14 @@ fn draw_game(ui: &mut Ui, app: &mut AbaloneApp, ctx: &Context) {
 
         match *e {
             InputError::WrongTurn { pos, .. } => {
-                highlight_one_square(painter, ctx, pos, ERROR_COLOR);
+                highlight_one_square(painter, dim, pos, ERROR_COLOR);
             }
             InputError::InvalidSet { start, end, .. } => {
-                highlight_one(painter, ctx, start, ERROR_COLOR);
-                highlight_one(painter, ctx, end, ERROR_COLOR);
+                highlight_one(painter, dim, start, ERROR_COLOR);
+                highlight_one(painter, dim, end, ERROR_COLOR);
             }
             InputError::CantExtendSelection { pos, .. } => {
-                highlight_one(painter, ctx, pos, ERROR_COLOR);
+                highlight_one(painter, dim, pos, ERROR_COLOR);
             }
         };
     }
@@ -342,22 +346,22 @@ fn draw_game(ui: &mut Ui, app: &mut AbaloneApp, ctx: &Context) {
     match app.drag {
         Some((DragKind::Selection, start, end)) => {
             // center on selected ball
-            let start = screen_to_game_pos(ctx, start);
-            let start = game_to_screen_pos(ctx, start);
+            let start = screen_to_game_pos(dim, start);
+            let start = game_to_screen_pos(dim, start);
 
             let line_color = with_alpha(SELECTION_COLOR, 0x80);
-            let stroke = Stroke::new(0.2 * ctx.ball_radius, line_color);
+            let stroke = Stroke::new(0.2 * dim.ball_radius, line_color);
             painter.line_segment([start, end], stroke);
         }
         Some((DragKind::Direction, start, end)) => {
             let line_color = Color32::from_rgba_unmultiplied(0xF0, 0xA0, 0x40, 0x80);
-            let stroke = Stroke::new(0.2 * ctx.ball_radius, line_color);
+            let stroke = Stroke::new(0.2 * dim.ball_radius, line_color);
             painter.line_segment([start, end], stroke);
 
             // arrow tip
             let vec = end - start;
-            if vec.length() > 0.5 * ctx.ball_offset {
-                let tip_length = 0.25 * ctx.ball_offset;
+            if vec.length() > 0.5 * dim.ball_offset {
+                let tip_length = 0.25 * dim.ball_offset;
                 let arrow_angle = vec.angle();
                 let left_tip_angle = arrow_angle - FRAC_PI_4;
                 let right_tip_angle = arrow_angle + FRAC_PI_4;
@@ -381,7 +385,7 @@ fn draw_game(ui: &mut Ui, app: &mut AbaloneApp, ctx: &Context) {
 
 fn highlight_selection(
     painter: &Painter,
-    ctx: &Context,
+    dim: &Dimensions,
     selection: [abalone::Pos2; 2],
     color: Color32,
 ) {
@@ -391,25 +395,25 @@ fn highlight_selection(
     let mag = vec.mag();
     for i in 0..=mag {
         let p = start + norm * i;
-        highlight_one(painter, ctx, p, color);
+        highlight_one(painter, dim, p, color);
     }
 }
 
-fn highlight_one_square(painter: &Painter, ctx: &Context, pos: abalone::Pos2, color: Color32) {
-    let pos = game_to_screen_pos(ctx, pos);
-    let stroke = Stroke::new(ctx.line_thickness, color);
-    painter.circle_stroke(pos, ctx.selection_radius, stroke);
-    let rect = Rect::from_center_size(pos, Vec2::splat(0.8 * ctx.ball_radius));
-    painter.rect_filled(rect, Rounding::same(0.1 * ctx.ball_radius), color);
+fn highlight_one_square(painter: &Painter, dim: &Dimensions, pos: abalone::Pos2, color: Color32) {
+    let pos = game_to_screen_pos(dim, pos);
+    let stroke = Stroke::new(dim.line_thickness, color);
+    painter.circle_stroke(pos, dim.selection_radius, stroke);
+    let rect = Rect::from_center_size(pos, Vec2::splat(0.8 * dim.ball_radius));
+    painter.rect_filled(rect, Rounding::same(0.1 * dim.ball_radius), color);
 }
 
-fn highlight_one(painter: &Painter, ctx: &Context, pos: abalone::Pos2, color: Color32) {
-    let pos = game_to_screen_pos(ctx, pos);
-    let stroke = Stroke::new(ctx.line_thickness, color);
-    painter.circle_stroke(pos, ctx.selection_radius, stroke);
+fn highlight_one(painter: &Painter, dim: &Dimensions, pos: abalone::Pos2, color: Color32) {
+    let pos = game_to_screen_pos(dim, pos);
+    let stroke = Stroke::new(dim.line_thickness, color);
+    painter.circle_stroke(pos, dim.selection_radius, stroke);
 }
 
-fn check_input(i: &mut InputState, app: &mut AbaloneApp, ctx: &Context) {
+fn check_input(i: &mut InputState, app: &mut AbaloneApp, dim: &Dimensions) {
     if i.consume_key(Modifiers::NONE, Key::Space) {
         app.board_flipped = !app.board_flipped;
     } else if i.consume_key(Modifiers::COMMAND, Key::Z) {
@@ -422,7 +426,7 @@ fn check_input(i: &mut InputState, app: &mut AbaloneApp, ctx: &Context) {
 
     if i.pointer.any_click() {
         if let Some(current) = i.pointer.interact_pos() {
-            let pos = screen_to_game_pos(ctx, current);
+            let pos = screen_to_game_pos(dim, current);
             if abalone::is_in_bounds(pos) {
                 if i.pointer.secondary_released() {
                     // always discard selection if secondary click was used
@@ -514,11 +518,11 @@ fn check_input(i: &mut InputState, app: &mut AbaloneApp, ctx: &Context) {
             } else {
                 DragKind::Selection
             };
-            let start = screen_to_game_pos(ctx, origin);
+            let start = screen_to_game_pos(dim, origin);
 
             match kind {
                 DragKind::Selection => {
-                    let end = screen_to_game_pos(ctx, current);
+                    let end = screen_to_game_pos(dim, current);
                     if abalone::is_in_bounds(start) && abalone::is_in_bounds(end) {
                         let error = app.game.check_selection([start, end]).err();
                         app.state = State::Selection([start, end], error);
@@ -531,16 +535,16 @@ fn check_input(i: &mut InputState, app: &mut AbaloneApp, ctx: &Context) {
                         State::NoSelection => {
                             // use the start position as selection if there is none
                             if abalone::is_in_bounds(start) {
-                                app.state = try_move(&app.game, ctx, [start; 2], [origin, current]);
+                                app.state = try_move(&app.game, dim, [start; 2], [origin, current]);
                             }
                         }
                         State::Selection(selection, error) => {
                             if error.is_none() {
-                                app.state = try_move(&app.game, ctx, *selection, [origin, current]);
+                                app.state = try_move(&app.game, dim, *selection, [origin, current]);
                             }
                         }
                         State::Move(selection, _) => {
-                            app.state = try_move(&app.game, ctx, *selection, [origin, current]);
+                            app.state = try_move(&app.game, dim, *selection, [origin, current]);
                         }
                     }
                 }
@@ -594,17 +598,17 @@ fn redo(app: &mut AbaloneApp) {
 
 fn try_move(
     game: &Abalone,
-    ctx: &Context,
+    dim: &Dimensions,
     selection: [abalone::Pos2; 2],
     [origin, current]: [Pos2; 2],
 ) -> State {
     let drag_vec = current - origin;
-    if drag_vec.length() < 0.5 * ctx.ball_offset {
+    if drag_vec.length() < 0.5 * dim.ball_offset {
         let error = game.check_selection(selection).err();
         return State::Selection(selection, error);
     }
 
-    let angle = (6.0 * ((drag_vec.angle() - ctx.board_angle + TAU) % TAU) / TAU).round();
+    let angle = (6.0 * ((drag_vec.angle() - dim.board_angle + TAU) % TAU) / TAU).round();
     let idx = (angle as u8) % 6;
     let dir = match idx {
         0 => Dir::PosX,
@@ -620,23 +624,23 @@ fn try_move(
     State::Move(selection, res)
 }
 
-fn game_to_screen_pos(ctx: &Context, pos: abalone::Pos2) -> Pos2 {
+fn game_to_screen_pos(dim: &Dimensions, pos: abalone::Pos2) -> Pos2 {
     let center_idx = 4;
     let cx = pos.x - center_idx;
     let cy = pos.y - center_idx;
-    let unit_x = rot_vec2(ctx.board_angle, Vec2::new(1.0, 0.0));
-    let unit_y = rot_vec2(ctx.board_angle + FRAC_PI_6, Vec2::new(0.0, 1.0));
-    ctx.center + ctx.ball_offset * (cx as f32 * unit_x + cy as f32 * unit_y)
+    let unit_x = rot_vec2(dim.board_angle, Vec2::new(1.0, 0.0));
+    let unit_y = rot_vec2(dim.board_angle + FRAC_PI_6, Vec2::new(0.0, 1.0));
+    dim.center + dim.ball_offset * (cx as f32 * unit_x + cy as f32 * unit_y)
 }
 
-fn screen_to_game_pos(ctx: &Context, pos: Pos2) -> abalone::Pos2 {
-    let center_dist = pos - ctx.center;
+fn screen_to_game_pos(dim: &Dimensions, pos: Pos2) -> abalone::Pos2 {
+    let center_dist = pos - dim.center;
     if center_dist == Vec2::ZERO {
         return abalone::Pos2::ZERO;
     }
 
-    let unit_x = rot_vec2(ctx.board_angle, Vec2::new(1.0, 0.0));
-    let unit_y = rot_vec2(ctx.board_angle + FRAC_PI_6, Vec2::new(0.0, 1.0));
+    let unit_x = rot_vec2(dim.board_angle, Vec2::new(1.0, 0.0));
+    let unit_y = rot_vec2(dim.board_angle + FRAC_PI_6, Vec2::new(0.0, 1.0));
     let ux = unit_x.x;
     let uy = unit_x.y;
     let vx = unit_y.x;
@@ -662,8 +666,8 @@ fn screen_to_game_pos(ctx: &Context, pos: Pos2) -> abalone::Pos2 {
     let b = (uy * c - ux * d) / (vx * uy - ux * vy);
     let a = (c - b * vx) / ux;
 
-    let cx = (a / ctx.ball_offset).round() as i8;
-    let cy = (b / ctx.ball_offset).round() as i8;
+    let cx = (a / dim.ball_offset).round() as i8;
+    let cy = (b / dim.ball_offset).round() as i8;
 
     let center_idx = 4;
     abalone::Pos2 {
