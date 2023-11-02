@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use abalone_core::{dto, Abalone};
+use abalone_core::{dto, Abalone, Color};
 use async_channel::{Receiver, Sender};
 use axum::extract::{Path, State};
 use axum::response::IntoResponse;
@@ -14,7 +14,7 @@ use tokio::sync::RwLock;
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
 
-use abalone_core::dto::{ClientMsg, RoomId, ServerMsg, TransactionId};
+use abalone_core::dto::{ClientMsg, RoomId, ServerMsg, TransactionId, UserId};
 use uuid::Uuid;
 
 #[cfg(test)]
@@ -42,10 +42,12 @@ struct Room {
     game: Abalone,
     players: [Option<PlayerSession>; 2],
     transactions: HashMap<TransactionId, JoinRoomTransaction>,
+    undo_requested: bool,
 }
 
 #[derive(Clone, Debug)]
 struct PlayerSession {
+    user_id: UserId,
     username: String,
     sender: Sender<ServerMsg>,
 }
@@ -99,6 +101,7 @@ async fn handle_socket(
     let (session_sender, session_receiver) = async_channel::unbounded();
     tokio::spawn(sender_task(socket_sender, session_receiver));
     let session = PlayerSession {
+        user_id: UserId(Uuid::new_v4()),
         username,
         sender: session_sender,
     };
@@ -119,7 +122,10 @@ async fn receiver_task(
 ) {
     let mut room: Option<RoomState> = None;
 
-    send_msg(&session.sender, ServerMsg::SyncEmpty).await;
+    {
+        let dto = dto::User::from(&session);
+        send_msg(&session.sender, ServerMsg::Welcome(dto)).await;
+    }
 
     'session: loop {
         let Some(msg) = socket.next().await else {
@@ -161,6 +167,7 @@ async fn receiver_task(
                     game: Abalone::new(),
                     players: [Some(session.clone()), None],
                     transactions: HashMap::new(),
+                    undo_requested: false,
                 };
                 let dto = dto::Room::from(&new_room);
                 let new_room = Arc::new(RwLock::new(new_room));
@@ -216,7 +223,7 @@ async fn receiver_task(
                 let mut other_player = None;
                 for p in room_lock.players.iter().filter_map(|p| p.as_ref()) {
                     if other_player.is_some() {
-                        let error = format!("Room with id {room_id} is empty");
+                        let error = format!("Room with id {room_id} is full");
                         send_msg(&session.sender, ServerMsg::Error(error)).await;
                         continue 'session;
                     }
@@ -318,11 +325,19 @@ async fn receiver_task(
                     continue 'session;
                 };
 
-                // TODO: check whose turn it is, and if two players are present
                 let mut room_lock = r.room.write().await;
+                let player_color = Color::try_from(r.player_idx as u8)
+                    .expect("player_idx should always be 0 or 1");
+                if room_lock.game.turn != player_color {
+                    let error = format!("It's not {player_color}s turn");
+                    send_msg(&session.sender, ServerMsg::Error(error)).await;
+                    continue 'session;
+                }
+
                 match room_lock.game.check_move([first, last], dir) {
                     Ok(m) => {
                         room_lock.game.submit_move(m);
+                        room_lock.undo_requested = false;
 
                         for p in room_lock.players.iter().filter_map(|p| p.as_ref()) {
                             send_msg(&p.sender, ServerMsg::AppliedMove(m)).await;
@@ -334,8 +349,75 @@ async fn receiver_task(
                     }
                 }
             }
-            ClientMsg::RequestUndo => todo!(),
-            ClientMsg::AllowUndo => todo!(),
+            ClientMsg::RequestUndo => {
+                let Some(r) = &room else {
+                    let error = format!("Not inside a room");
+                    send_msg(&session.sender, ServerMsg::Error(error)).await;
+                    continue 'session;
+                };
+
+                let mut room_lock = r.room.write().await;
+                let player_color = Color::try_from(r.player_idx as u8)
+                    .expect("player_idx should always be 0 or 1");
+                if room_lock.game.turn == player_color {
+                    let error = format!("Can't request undo for opponents move");
+                    send_msg(&session.sender, ServerMsg::Error(error)).await;
+                    continue 'session;
+                }
+                if !room_lock.game.can_undo() {
+                    let error = format!("No move to undo");
+                    send_msg(&session.sender, ServerMsg::Error(error)).await;
+                    continue 'session;
+                }
+
+                room_lock.undo_requested = true;
+
+                let mut sent_request = false;
+                for (i, p) in room_lock.players.iter().enumerate() {
+                    if i == r.player_idx {
+                        continue;
+                    }
+                    if let Some(p) = p {
+                        send_msg(&p.sender, ServerMsg::UndoRequested).await;
+                        sent_request = true;
+                    }
+                }
+
+                if !sent_request {
+                    let error = format!("No other player in room");
+                    send_msg(&session.sender, ServerMsg::Error(error)).await;
+                    continue 'session;
+                }
+            }
+            ClientMsg::AllowUndo => {
+                let Some(r) = &room else {
+                    let error = format!("Not inside a room");
+                    send_msg(&session.sender, ServerMsg::Error(error)).await;
+                    continue 'session;
+                };
+
+                let mut room_lock = r.room.write().await;
+                let player_color = Color::try_from(r.player_idx as u8)
+                    .expect("player_idx should always be 0 or 1");
+                if room_lock.game.turn != player_color {
+                    let error = format!("Can't allow undo for own move");
+                    send_msg(&session.sender, ServerMsg::Error(error)).await;
+                    continue 'session;
+                }
+                if !room_lock.game.can_undo() {
+                    let error = format!("No move to undo");
+                    send_msg(&session.sender, ServerMsg::Error(error)).await;
+                    continue 'session;
+                }
+
+                room_lock.game.undo_move();
+                room_lock.undo_requested = false;
+
+                for p in room_lock.players.iter().filter_map(|p| p.as_ref()) {
+                    let dto = dto::Room::from(&*room_lock);
+                    send_msg(&p.sender, ServerMsg::Sync(dto)).await;
+                }
+            }
         }
     }
 }
@@ -418,6 +500,7 @@ impl From<&Room> for dto::OpenRoom {
 impl From<&PlayerSession> for dto::User {
     fn from(value: &PlayerSession) -> Self {
         Self {
+            id: value.user_id,
             name: value.username.clone(),
         }
     }

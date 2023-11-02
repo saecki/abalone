@@ -168,8 +168,29 @@ impl std::fmt::Display for MoveError {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize, Serialize)]
 pub enum Color {
-    Black,
-    White,
+    Black = 0,
+    White = 1,
+}
+
+impl std::fmt::Display for Color {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Color::Black => f.write_str("black"),
+            Color::White => f.write_str("white"),
+        }
+    }
+}
+
+impl TryFrom<u8> for Color {
+    type Error = ();
+
+    fn try_from(value: u8) -> Result<Self, Self::Error> {
+        match value {
+            0 => Ok(Self::Black),
+            1 => Ok(Self::White),
+            _ => Err(()),
+        }
+    }
 }
 
 impl Color {

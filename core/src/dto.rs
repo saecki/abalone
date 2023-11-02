@@ -28,6 +28,8 @@ pub enum ClientMsg {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum ServerMsg {
+    /// Connection acknowledge
+    Welcome(User),
     /// List of open rooms.
     OpenRooms(Vec<OpenRoom>),
     /// Someone requested to join the room.
@@ -63,6 +65,7 @@ pub struct OpenRoom {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct User {
+    pub id: UserId,
     pub name: String,
 }
 
@@ -81,5 +84,14 @@ pub struct RoomId(pub u64);
 impl std::fmt::Display for RoomId {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         self.0.fmt(f)
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+pub struct UserId(pub uuid::Uuid);
+
+impl std::fmt::Display for UserId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.0.simple().fmt(f)
     }
 }
