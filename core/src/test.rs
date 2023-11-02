@@ -1,4 +1,4 @@
-use crate::{Abalone, Dir, Error, MoveError, Pos2, SelectionError, Move, Vec2};
+use crate::{Abalone, Dir, Error, Move, MoveError, Pos2, SelectionError, Vec2};
 
 struct CheckState {
     game: Abalone,

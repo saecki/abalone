@@ -3,7 +3,7 @@ use std::sync::Arc;
 
 use abalone_core::{dto, Abalone};
 use async_channel::{Receiver, Sender};
-use axum::extract::State;
+use axum::extract::{Path, State};
 use axum::response::IntoResponse;
 use axum::routing::get;
 use axum::Router;
@@ -46,6 +46,7 @@ struct Room {
 
 #[derive(Clone, Debug)]
 struct PlayerSession {
+    username: String,
     sender: Sender<ServerMsg>,
 }
 
@@ -72,7 +73,7 @@ fn main() {
     runtime.block_on(async {
         let state = Arc::new(RwLock::new(AppState::new()));
         let app = Router::new()
-            .route("/join", get(ws_handler))
+            .route("/join/:username", get(ws_handler))
             .with_state(state);
 
         let listener = axum::Server::bind(&"0.0.0.0:8910".parse().unwrap());
@@ -84,15 +85,21 @@ fn main() {
 async fn ws_handler(
     ws: WebSocketUpgrade<ServerMsg, ClientMsg>,
     State(state): State<Arc<RwLock<AppState>>>,
+    Path(username): Path<String>,
 ) -> impl IntoResponse {
-    ws.on_upgrade(|socket| handle_socket(state, socket))
+    ws.on_upgrade(|socket| handle_socket(state, socket, username))
 }
 
-async fn handle_socket(state: Arc<RwLock<AppState>>, socket: WebSocket<ServerMsg, ClientMsg>) {
+async fn handle_socket(
+    state: Arc<RwLock<AppState>>,
+    socket: WebSocket<ServerMsg, ClientMsg>,
+    username: String,
+) {
     let (socket_sender, socket_receiver) = socket.split();
     let (session_sender, session_receiver) = async_channel::unbounded();
     tokio::spawn(sender_task(socket_sender, session_receiver));
     let session = PlayerSession {
+        username,
         sender: session_sender,
     };
     tokio::spawn(receiver_task(state, socket_receiver, session));
@@ -112,6 +119,8 @@ async fn receiver_task(
 ) {
     let mut room: Option<RoomState> = None;
 
+    send_msg(&session.sender, ServerMsg::SyncEmpty).await;
+
     'session: loop {
         let Some(msg) = socket.next().await else {
             return;
@@ -120,9 +129,11 @@ async fn receiver_task(
         let msg = match msg {
             Ok(m) => m,
             Err(axum_typed_websockets::Error::Ws(_)) => return,
-            // TODO: maybe try to recover from codec, either by requesting the client to resend the
-            // message, or resynchronizing
-            Err(axum_typed_websockets::Error::Codec(_)) => return,
+            Err(axum_typed_websockets::Error::Codec(e)) => {
+                let error = format!("Invalid message format: {e}");
+                send_msg(&session.sender, ServerMsg::Error(error)).await;
+                continue 'session;
+            }
         };
 
         let msg = match msg {
@@ -380,19 +391,35 @@ async fn send_msg(sender: &Sender<ServerMsg>, msg: ServerMsg) {
 
 impl From<&Room> for dto::Room {
     fn from(room: &Room) -> Self {
-        dto::Room {
+        Self {
             id: room.id,
             name: room.name.clone(),
             game: room.game.clone(),
+            players: [
+                room.players[0].as_ref().map(|p| dto::User::from(p)),
+                room.players[1].as_ref().map(|p| dto::User::from(p)),
+            ],
         }
     }
 }
 
 impl From<&Room> for dto::OpenRoom {
     fn from(room: &Room) -> Self {
-        dto::OpenRoom {
+        Self {
             id: room.id,
             name: room.name.clone(),
+            players: [
+                room.players[0].as_ref().map(|p| dto::User::from(p)),
+                room.players[1].as_ref().map(|p| dto::User::from(p)),
+            ],
+        }
+    }
+}
+
+impl From<&PlayerSession> for dto::User {
+    fn from(value: &PlayerSession) -> Self {
+        Self {
+            name: value.username.clone(),
         }
     }
 }

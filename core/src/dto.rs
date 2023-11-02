@@ -52,11 +52,18 @@ pub struct Room {
     pub id: RoomId,
     pub name: String,
     pub game: Abalone,
+    pub players: [Option<User>; 2],
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct OpenRoom {
     pub id: RoomId,
+    pub name: String,
+    pub players: [Option<User>; 2],
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct User {
     pub name: String,
 }
 
