@@ -137,7 +137,7 @@ async fn receiver_task(
                 );
                 leave_room(&state, &r).await;
             }
-            return;
+            break 'session;
         };
 
         let msg = match msg {
@@ -151,7 +151,7 @@ async fn receiver_task(
                     );
                     leave_room(&state, &r).await;
                 }
-                return;
+                break 'session;
             }
             Err(axum_typed_websockets::Error::Codec(e)) => {
                 let error = format!("Invalid message format: {e}");
@@ -173,7 +173,7 @@ async fn receiver_task(
                     );
                     leave_room(&state, &r).await;
                 }
-                return;
+                break 'session;
             }
         };
 
@@ -448,6 +448,8 @@ async fn receiver_task(
             }
         }
     }
+
+    session.sender.close();
 }
 
 async fn sender_task(
