@@ -308,7 +308,7 @@ async fn receiver_task(
                 };
                 let mut room_lock = open_room.write().await;
 
-                if room_lock.transactions.get(&transaction_id).is_none() {
+                if room_lock.transactions.remove(&transaction_id).is_none() {
                     let error = format!("Transaction with id {transaction_id} not found");
                     send_msg(&session.sender, ServerMsg::Error(error)).await;
                     continue 'session;
