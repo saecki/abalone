@@ -276,12 +276,17 @@ async fn receiver_task(
                 };
                 let room_lock = r.room.read().await;
 
-                // TODO: check if other player is still connected
                 let Some(transaction) = room_lock.transactions.get(&transaction_id) else {
                     let error = format!("Transaction with id {transaction_id} not found");
                     send_msg(&session.sender, ServerMsg::Error(error)).await;
                     continue 'session;
                 };
+
+                if transaction.player.sender.is_closed() {
+                    let error = format!("Player already disconnected");
+                    send_msg(&session.sender, ServerMsg::Error(error)).await;
+                    continue 'session;
+                }
 
                 let dto = dto::OpenRoom::from(&*room_lock);
                 let msg = ServerMsg::JoinRoomAllowed(dto, transaction_id);
