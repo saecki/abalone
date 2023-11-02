@@ -46,7 +46,6 @@ pub enum ServerMsg {
     Error(String),
 }
 
-// TODO: include some information about the players, like a login name
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Room {
     pub id: RoomId,

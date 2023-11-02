@@ -140,7 +140,6 @@ async fn receiver_task(
             Message::Item(m) => m,
             // ignore
             Message::Ping(_) | Message::Pong(_) => continue 'session,
-            // TODO: if the client was in a room, notify the opponent
             Message::Close(_) => {
                 if let Some(r) = room {
                     leave_room(&state, &r).await;
