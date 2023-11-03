@@ -4,9 +4,11 @@ use abalone_core::{self as abalone, Abalone, Color, Dir, SelectionError};
 use eframe::{CreationContext, NativeOptions};
 use egui::{
     Align2, CentralPanel, Color32, FontFamily, FontId, Frame, Id, InputState, Key, Modifiers,
-    Painter, Pos2, Rect, Rounding, Sense, Stroke, Ui, Vec2,
+    Painter, Pos2, Rect, Response, Rounding, Sense, Stroke, Ui, Vec2,
 };
 use serde_derive::{Deserialize, Serialize};
+
+mod connection;
 
 const BLACK_COLOR: Color32 = Color32::from_gray(0x02);
 const WHITE_COLOR: Color32 = Color32::from_gray(0xD0);
@@ -33,28 +35,9 @@ fn main() {
     .expect("error running app");
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Default, Serialize, Deserialize)]
 struct AbaloneApp {
-    game: Abalone,
-    #[serde(skip)]
-    drag: Option<(DragKind, Pos2, Pos2)>,
-    #[serde(skip)]
     state: State,
-    #[serde(skip)]
-    input_errors: Vec<InputError>,
-    board_flipped: bool,
-}
-
-impl Default for AbaloneApp {
-    fn default() -> Self {
-        Self {
-            game: Abalone::new(),
-            drag: None,
-            state: State::NoSelection,
-            input_errors: Vec::new(),
-            board_flipped: false,
-        }
-    }
 }
 
 impl AbaloneApp {
@@ -66,6 +49,40 @@ impl AbaloneApp {
         }
 
         Self::default()
+    }
+}
+
+#[derive(Default, Serialize, Deserialize)]
+enum State {
+    #[default]
+    Home,
+    Browsing,
+    OnlineGame,
+    OfflineGame(OfflineGame),
+}
+
+enum Navigation {
+    Home,
+    Stay,
+}
+
+#[derive(Default, Serialize, Deserialize)]
+struct OfflineGame {
+    game: Abalone,
+    #[serde(skip)]
+    drag: Option<(DragKind, Pos2, Pos2)>,
+    #[serde(skip)]
+    state: SelectionState,
+    #[serde(skip)]
+    input_errors: Vec<InputError>,
+    board_flipped: bool,
+}
+
+impl OfflineGame {
+    fn reset(&mut self) {
+        self.game = Abalone::new();
+        self.state = SelectionState::NoSelection;
+        self.input_errors.clear();
     }
 }
 
@@ -91,7 +108,7 @@ enum DragKind {
 }
 
 #[derive(Debug, Default)]
-enum State {
+enum SelectionState {
     #[default]
     NoSelection,
     Selection([abalone::Pos2; 2], Option<SelectionError>),
@@ -117,12 +134,32 @@ impl eframe::App for AbaloneApp {
         CentralPanel::default()
             .frame(Frame::none().fill(Color32::from_gray(0x2B)))
             .show(ctx, |ui| {
-                draw_game(ui, self);
+                let nav = match &mut self.state {
+                    State::Home => draw_home(ui, self),
+                    State::Browsing => todo!(),
+                    State::OnlineGame => todo!(),
+                    State::OfflineGame(g) => draw_game(ui, g),
+                };
+
+                match nav {
+                    Navigation::Home => self.state = State::Home,
+                    Navigation::Stay => (),
+                }
             });
     }
 }
 
-fn draw_game(ui: &mut Ui, app: &mut AbaloneApp) {
+fn draw_home(ui: &mut Ui, app: &mut AbaloneApp) -> Navigation {
+    ui.vertical_centered_justified(|ui| {
+        if ui.button("Offline game").clicked() {
+            app.state = State::OfflineGame(OfflineGame::default());
+        }
+    });
+
+    Navigation::Stay
+}
+
+fn draw_game(ui: &mut Ui, app: &mut OfflineGame) -> Navigation {
     // TODO: fix animation snapping when changing direction while animation is still in progress.
     let board_angle = PI
         * ui.ctx()
@@ -149,10 +186,11 @@ fn draw_game(ui: &mut Ui, app: &mut AbaloneApp) {
         check_input(i, app, &dim);
     });
 
-    draw_board(ui, app, &dim);
+    draw_board(ui, app, &dim)
 }
 
-fn draw_board(ui: &mut Ui, app: &mut AbaloneApp, dim: &Dimensions) {
+fn draw_board(ui: &mut Ui, app: &mut OfflineGame, dim: &Dimensions) -> Navigation {
+    let mut nav = Navigation::Stay;
     let painter = ui.painter();
 
     let mut black_score = abalone::NUM_STARTING_BALLS;
@@ -189,38 +227,49 @@ fn draw_board(ui: &mut Ui, app: &mut AbaloneApp, dim: &Dimensions) {
         WHITE_COLOR,
     );
 
-    let icon_font = FontId::new(0.4 * dim.ball_offset, FontFamily::Proportional);
-    let undo_pos = used_screen_rect.center_top() + Vec2::new(-padding, padding);
-    let color = if app.game.can_undo() {
-        ICON_COLOR
-    } else {
-        ICON_DISABLED_COLOR
-    };
-    let rect = painter.text(
+    // undo icon
+    let undo_pos = used_screen_rect.center_top() + Vec2::new(-2.0 * padding, padding);
+    let resp = icon_button(
+        ui,
+        painter,
+        dim,
+        Id::new("undo"),
         undo_pos,
         Align2::RIGHT_TOP,
+        app.game.can_undo(),
         "\u{2baa}".to_string(),
-        icon_font.clone(),
-        color,
     );
-    if ui.interact(rect, Id::new("undo"), Sense::click()).clicked() {
+    if resp.clicked() {
         undo(app);
     }
 
-    let redo_pos = used_screen_rect.center_top() + Vec2::new(padding, padding);
-    let color = if app.game.can_redo() {
-        ICON_COLOR
-    } else {
-        ICON_DISABLED_COLOR
-    };
-    let rect = painter.text(
+    // sandwich icon
+    let sandwich_pos = used_screen_rect.center_top() + Vec2::new(0.0, padding);
+    let resp = icon_button(
+        ui,
+        painter,
+        dim,
+        Id::new("menu"),
+        sandwich_pos,
+        Align2::CENTER_TOP,
+        true,
+        "\u{2630}".to_string(),
+    );
+    if resp.clicked() {}
+
+    // redo icon
+    let redo_pos = used_screen_rect.center_top() + Vec2::new(2.0 * padding, padding);
+    let resp = icon_button(
+        ui,
+        painter,
+        dim,
+        Id::new("redo"),
         redo_pos,
         Align2::LEFT_TOP,
+        app.game.can_redo(),
         "\u{2bab}".to_string(),
-        icon_font,
-        color,
     );
-    if ui.interact(rect, Id::new("redo"), Sense::click()).clicked() {
+    if resp.clicked() {
         redo(app);
     }
 
@@ -243,8 +292,8 @@ fn draw_board(ui: &mut Ui, app: &mut AbaloneApp, dim: &Dimensions) {
 
     // highlight current state
     match &app.state {
-        State::NoSelection => (),
-        State::Selection(selection, error) => match error {
+        SelectionState::NoSelection => (),
+        SelectionState::Selection(selection, error) => match error {
             &Some(SelectionError::WrongTurn(p)) => {
                 highlight_one_square(painter, dim, p, ERROR_COLOR);
 
@@ -280,7 +329,7 @@ fn draw_board(ui: &mut Ui, app: &mut AbaloneApp, dim: &Dimensions) {
                 highlight_selection(painter, dim, *selection, SELECTION_COLOR);
             }
         },
-        State::Move(selection, res) => {
+        SelectionState::Move(selection, res) => {
             highlight_selection(painter, dim, *selection, SELECTION_COLOR);
             match res {
                 Err(abalone::Error::Selection(_)) => (),
@@ -381,6 +430,8 @@ fn draw_board(ui: &mut Ui, app: &mut AbaloneApp, dim: &Dimensions) {
         }
         None => (),
     }
+
+    nav
 }
 
 fn highlight_selection(
@@ -413,7 +464,37 @@ fn highlight_one(painter: &Painter, dim: &Dimensions, pos: abalone::Pos2, color:
     painter.circle_stroke(pos, dim.selection_radius, stroke);
 }
 
-fn check_input(i: &mut InputState, app: &mut AbaloneApp, dim: &Dimensions) {
+fn icon_button(
+    ui: &Ui,
+    painter: &Painter,
+    dim: &Dimensions,
+    id: Id,
+    pos: Pos2,
+    anchor: Align2,
+    enabled: bool,
+    text: String,
+) -> Response {
+    let icon_font = FontId::new(0.4 * dim.ball_offset, FontFamily::Proportional);
+    let color = if enabled {
+        ICON_COLOR
+    } else {
+        ICON_DISABLED_COLOR
+    };
+    let rect = painter.text(pos, anchor, text, icon_font, color);
+    let resp = ui.interact(rect, id, Sense::click());
+    if resp.has_focus() {
+        let focus_stroke = Stroke::new(0.08 * dim.ball_radius, SELECTION_COLOR);
+        let focus_rect = rect.expand(0.1 * dim.ball_radius);
+        painter.rect_stroke(
+            focus_rect,
+            Rounding::same(0.2 * dim.ball_radius),
+            focus_stroke,
+        );
+    }
+    resp
+}
+
+fn check_input(i: &mut InputState, app: &mut OfflineGame, dim: &Dimensions) {
     if i.consume_key(Modifiers::NONE, Key::Space) {
         app.board_flipped = !app.board_flipped;
     } else if i.consume_key(Modifiers::COMMAND, Key::Z) {
@@ -421,7 +502,7 @@ fn check_input(i: &mut InputState, app: &mut AbaloneApp, dim: &Dimensions) {
     } else if i.consume_key(Modifiers::COMMAND, Key::Y) {
         redo(app);
     } else if i.consume_key(Modifiers::NONE, Key::Escape) {
-        app.state = State::NoSelection;
+        app.state = SelectionState::NoSelection;
     }
 
     if i.pointer.any_click() {
@@ -431,31 +512,31 @@ fn check_input(i: &mut InputState, app: &mut AbaloneApp, dim: &Dimensions) {
                 if i.pointer.secondary_released() {
                     // always discard selection if secondary click was used
                     let error = app.game.check_selection([pos; 2]).err();
-                    app.state = State::Selection([pos; 2], error)
+                    app.state = SelectionState::Selection([pos; 2], error)
                 } else {
                     match &app.state {
-                        State::NoSelection => {
+                        SelectionState::NoSelection => {
                             let error = app.game.check_selection([pos; 2]).err();
-                            app.state = State::Selection([pos; 2], error)
+                            app.state = SelectionState::Selection([pos; 2], error)
                         }
-                        &State::Selection([start, end], _) => {
+                        &SelectionState::Selection([start, end], _) => {
                             let sel_vec = end - start;
                             if sel_vec == abalone::Vec2::ZERO {
                                 if pos == start {
-                                    app.state = State::NoSelection;
+                                    app.state = SelectionState::NoSelection;
                                 } else {
                                     let selection = [start, pos];
                                     let error = app.game.check_selection(selection).err();
-                                    app.state = State::Selection(selection, error);
+                                    app.state = SelectionState::Selection(selection, error);
                                 }
                             } else if pos == start {
                                 let selection = [start + sel_vec.norm(), end];
                                 let error = app.game.check_selection(selection).err();
-                                app.state = State::Selection(selection, error);
+                                app.state = SelectionState::Selection(selection, error);
                             } else if pos == end {
                                 let selection = [start, end - sel_vec.norm()];
                                 let error = app.game.check_selection(selection).err();
-                                app.state = State::Selection(selection, error);
+                                app.state = SelectionState::Selection(selection, error);
                             } else {
                                 let start_vec = pos - start;
                                 let end_vec = pos - end;
@@ -465,11 +546,11 @@ fn check_input(i: &mut InputState, app: &mut AbaloneApp, dim: &Dimensions) {
                                     if start_vec.mag() < end_vec.mag() {
                                         let selection = [pos, end];
                                         let error = app.game.check_selection(selection).err();
-                                        app.state = State::Selection(selection, error);
+                                        app.state = SelectionState::Selection(selection, error);
                                     } else {
                                         let selection = [start, pos];
                                         let error = app.game.check_selection(selection).err();
-                                        app.state = State::Selection(selection, error);
+                                        app.state = SelectionState::Selection(selection, error);
                                     }
                                 } else {
                                     app.input_errors.push(InputError::CantExtendSelection {
@@ -479,19 +560,19 @@ fn check_input(i: &mut InputState, app: &mut AbaloneApp, dim: &Dimensions) {
                                 }
                             }
                         }
-                        State::Move(_, _) => (),
+                        SelectionState::Move(_, _) => (),
                     }
                 }
 
                 // clear selection only if it's invalid set
-                if let State::Selection(selection, error) = &app.state {
+                if let SelectionState::Selection(selection, error) = &app.state {
                     match error {
                         Some(SelectionError::WrongTurn(p)) => {
                             app.input_errors.push(InputError::WrongTurn {
                                 start_secs: i.time,
                                 pos: *p,
                             });
-                            app.state = State::NoSelection;
+                            app.state = SelectionState::NoSelection;
                         }
                         Some(SelectionError::InvalidSet) => {
                             let [start, end] = *selection;
@@ -500,13 +581,13 @@ fn check_input(i: &mut InputState, app: &mut AbaloneApp, dim: &Dimensions) {
                                 start,
                                 end,
                             });
-                            app.state = State::NoSelection;
+                            app.state = SelectionState::NoSelection;
                         }
                         _ => (),
                     }
                 }
             } else {
-                app.state = State::NoSelection;
+                app.state = SelectionState::NoSelection;
             }
         }
     }
@@ -525,25 +606,25 @@ fn check_input(i: &mut InputState, app: &mut AbaloneApp, dim: &Dimensions) {
                     let end = screen_to_game_pos(dim, current);
                     if abalone::is_in_bounds(start) && abalone::is_in_bounds(end) {
                         let error = app.game.check_selection([start, end]).err();
-                        app.state = State::Selection([start, end], error);
+                        app.state = SelectionState::Selection([start, end], error);
                     } else {
-                        app.state = State::NoSelection;
+                        app.state = SelectionState::NoSelection;
                     }
                 }
                 DragKind::Direction => {
                     match &app.state {
-                        State::NoSelection => {
+                        SelectionState::NoSelection => {
                             // use the start position as selection if there is none
                             if abalone::is_in_bounds(start) {
                                 app.state = try_move(&app.game, dim, [start; 2], [origin, current]);
                             }
                         }
-                        State::Selection(selection, error) => {
+                        SelectionState::Selection(selection, error) => {
                             if error.is_none() {
                                 app.state = try_move(&app.game, dim, *selection, [origin, current]);
                             }
                         }
-                        State::Move(selection, _) => {
+                        SelectionState::Move(selection, _) => {
                             app.state = try_move(&app.game, dim, *selection, [origin, current]);
                         }
                     }
@@ -554,20 +635,20 @@ fn check_input(i: &mut InputState, app: &mut AbaloneApp, dim: &Dimensions) {
         } else {
             // drag released
             match &app.state {
-                State::NoSelection => (),
-                State::Selection(_, error) => {
+                SelectionState::NoSelection => (),
+                SelectionState::Selection(_, error) => {
                     // clear invalid selection when drag is released
                     if error.is_some() {
-                        app.state = State::NoSelection;
+                        app.state = SelectionState::NoSelection;
                     }
                 }
-                State::Move(selection, res) => {
+                SelectionState::Move(selection, res) => {
                     app.state = match res {
                         Ok(mov) => {
                             app.game.submit_move(*mov);
-                            State::NoSelection
+                            SelectionState::NoSelection
                         }
-                        Err(_) => State::Selection(*selection, None),
+                        Err(_) => SelectionState::Selection(*selection, None),
                     };
                 }
             }
@@ -586,13 +667,13 @@ fn check_input(i: &mut InputState, app: &mut AbaloneApp, dim: &Dimensions) {
     });
 }
 
-fn undo(app: &mut AbaloneApp) {
-    app.state = State::NoSelection;
+fn undo(app: &mut OfflineGame) {
+    app.state = SelectionState::NoSelection;
     app.game.undo_move();
 }
 
-fn redo(app: &mut AbaloneApp) {
-    app.state = State::NoSelection;
+fn redo(app: &mut OfflineGame) {
+    app.state = SelectionState::NoSelection;
     app.game.redo_move();
 }
 
@@ -601,11 +682,11 @@ fn try_move(
     dim: &Dimensions,
     selection: [abalone::Pos2; 2],
     [origin, current]: [Pos2; 2],
-) -> State {
+) -> SelectionState {
     let drag_vec = current - origin;
     if drag_vec.length() < 0.5 * dim.ball_offset {
         let error = game.check_selection(selection).err();
-        return State::Selection(selection, error);
+        return SelectionState::Selection(selection, error);
     }
 
     let angle = (6.0 * ((drag_vec.angle() - dim.board_angle + TAU) % TAU) / TAU).round();
@@ -621,7 +702,7 @@ fn try_move(
     };
 
     let res = game.check_move(selection, dir);
-    State::Move(selection, res)
+    SelectionState::Move(selection, res)
 }
 
 fn game_to_screen_pos(dim: &Dimensions, pos: abalone::Pos2) -> Pos2 {

@@ -3,11 +3,11 @@ use std::sync::Arc;
 
 use abalone_core::{dto, Abalone, Color};
 use async_channel::{Receiver, Sender};
+use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
 use axum::extract::{Path, State};
 use axum::response::IntoResponse;
 use axum::routing::get;
 use axum::Router;
-use axum_typed_websockets::{Message, WebSocket, WebSocketUpgrade};
 use futures_util::stream::{SplitSink, SplitStream};
 use futures_util::{SinkExt, StreamExt};
 use tokio::sync::RwLock;
@@ -85,18 +85,14 @@ fn main() {
 
 // TODO: user accounts and login
 async fn ws_handler(
-    ws: WebSocketUpgrade<ServerMsg, ClientMsg>,
+    ws: WebSocketUpgrade,
     State(state): State<Arc<RwLock<AppState>>>,
     Path(username): Path<String>,
 ) -> impl IntoResponse {
     ws.on_upgrade(|socket| handle_socket(state, socket, username))
 }
 
-async fn handle_socket(
-    state: Arc<RwLock<AppState>>,
-    socket: WebSocket<ServerMsg, ClientMsg>,
-    username: String,
-) {
+async fn handle_socket(state: Arc<RwLock<AppState>>, socket: WebSocket, username: String) {
     let (socket_sender, socket_receiver) = socket.split();
     let (session_sender, session_receiver) = async_channel::unbounded();
     tokio::spawn(sender_task(socket_sender, session_receiver));
@@ -117,7 +113,7 @@ struct RoomState {
 
 async fn receiver_task(
     state: Arc<RwLock<AppState>>,
-    mut socket: SplitStream<WebSocket<ServerMsg, ClientMsg>>,
+    mut socket: SplitStream<WebSocket>,
     session: PlayerSession,
 ) {
     let mut room: Option<RoomState> = None;
@@ -129,12 +125,12 @@ async fn receiver_task(
 
     'session: loop {
         let Some(msg) = socket.next().await else {
+            tracing::debug!(
+                "Connection closed by user \"{}\" with id {}",
+                session.username,
+                session.user_id
+            );
             if let Some(r) = room {
-                tracing::debug!(
-                    "Connection closed by user \"{}\" with id {}",
-                    session.username,
-                    session.user_id
-                );
                 leave_room(&state, &r).await;
             }
             break 'session;
@@ -142,38 +138,45 @@ async fn receiver_task(
 
         let msg = match msg {
             Ok(m) => m,
-            Err(axum_typed_websockets::Error::Ws(_)) => {
+            Err(e) => {
+                tracing::debug!(
+                    "Connection error: user \"{}\" with id {}: {e}",
+                    session.username,
+                    session.user_id
+                );
                 if let Some(r) = room {
-                    tracing::debug!(
-                        "Connection error: user \"{}\" with id {}",
-                        session.username,
-                        session.user_id
-                    );
                     leave_room(&state, &r).await;
                 }
                 break 'session;
             }
-            Err(axum_typed_websockets::Error::Codec(e)) => {
-                let error = format!("Invalid message format: {e}");
-                send_msg(&session.sender, ServerMsg::Error(error)).await;
-                continue 'session;
-            }
         };
 
-        let msg = match msg {
-            Message::Item(m) => m,
-            // ignore
-            Message::Ping(_) | Message::Pong(_) => continue 'session,
-            Message::Close(_) => {
-                if let Some(r) = room {
+        let msg = {
+            let bytes = match &msg {
+                Message::Text(t) => t.as_bytes(),
+                Message::Binary(v) => v.as_slice(),
+                // ignore
+                Message::Ping(_) | Message::Pong(_) => continue 'session,
+                Message::Close(_) => {
                     tracing::debug!(
                         "Connection closed by user \"{}\" with id {}",
                         session.username,
                         session.user_id
                     );
-                    leave_room(&state, &r).await;
+                    if let Some(r) = room {
+                        leave_room(&state, &r).await;
+                    }
+                    break 'session;
                 }
-                break 'session;
+            };
+
+            match serde_json::from_slice(bytes) {
+                Ok(m) => m,
+                Err(e) => {
+                    let error = format!("Invalid message format: {e}");
+                    send_msg(&session.sender, ServerMsg::Error(error)).await;
+                    continue 'session;
+                }
             }
         };
 
@@ -454,16 +457,14 @@ async fn receiver_task(
     session.sender.close();
 }
 
-async fn sender_task(
-    mut socket: SplitSink<WebSocket<ServerMsg, ClientMsg>, Message<ServerMsg>>,
-    session: Receiver<ServerMsg>,
-) {
+async fn sender_task(mut socket: SplitSink<WebSocket, Message>, session: Receiver<ServerMsg>) {
     loop {
         let Ok(msg) = session.recv().await else {
             return;
         };
 
-        let res = socket.send(Message::Item(msg)).await;
+        let string = serde_json::to_string(&msg).expect("message should be valid");
+        let res = socket.send(Message::Text(string)).await;
         if let Err(_e) = res {
             todo!();
         }
