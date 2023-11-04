@@ -1,12 +1,18 @@
 use std::f32::consts::{FRAC_PI_4, FRAC_PI_6, PI, TAU};
+use std::sync::Arc;
 
+use abalone::dto::ClientMsg;
 use abalone_core::{self as abalone, Abalone, Color, Dir, SelectionError};
+use async_channel::{Receiver, Sender};
 use eframe::{CreationContext, NativeOptions};
 use egui::{
     Align2, CentralPanel, Color32, FontFamily, FontId, Frame, Id, InputState, Key, Modifiers,
-    Painter, Pos2, Rect, Response, Rounding, Sense, Stroke, Ui, Vec2,
+    Painter, Pos2, Rect, Response, Rounding, Sense, Stroke, TextEdit, Ui, Vec2,
 };
 use serde_derive::{Deserialize, Serialize};
+use tokio::sync::Mutex;
+
+use crate::connection::{open_connection, ConnectionState};
 
 mod connection;
 
@@ -37,6 +43,7 @@ fn main() {
 
 #[derive(Default, Serialize, Deserialize)]
 struct AbaloneApp {
+    userdata: Userdata,
     state: State,
 }
 
@@ -52,18 +59,42 @@ impl AbaloneApp {
     }
 }
 
+#[derive(Clone, Default, Serialize, Deserialize)]
+struct Userdata {
+    address: String,
+    username: String,
+}
+
 #[derive(Default, Serialize, Deserialize)]
 enum State {
     #[default]
     Home,
-    Browsing,
-    OnlineGame,
-    OfflineGame(OfflineGame),
+    #[serde(skip)]
+    Online(OnlineGame),
+    Offline(OfflineGame),
 }
 
 enum Navigation {
     Home,
     Stay,
+}
+
+struct OnlineGame {
+    sender: Sender<ClientMsg>,
+    receiver: Receiver<ClientMsg>,
+    state: Arc<Mutex<ConnectionState>>,
+}
+
+impl OnlineGame {
+    fn new() -> Self {
+        let (sender, receiver) = async_channel::unbounded();
+        let state = Arc::new(Mutex::new(ConnectionState::default()));
+        Self {
+            sender,
+            receiver,
+            state,
+        }
+    }
 }
 
 #[derive(Default, Serialize, Deserialize)]
@@ -72,7 +103,7 @@ struct OfflineGame {
     #[serde(skip)]
     drag: Option<(DragKind, Pos2, Pos2)>,
     #[serde(skip)]
-    state: SelectionState,
+    selection: SelectionState,
     #[serde(skip)]
     input_errors: Vec<InputError>,
     board_flipped: bool,
@@ -81,7 +112,7 @@ struct OfflineGame {
 impl OfflineGame {
     fn reset(&mut self) {
         self.game = Abalone::new();
-        self.state = SelectionState::NoSelection;
+        self.selection = SelectionState::NoSelection;
         self.input_errors.clear();
     }
 }
@@ -136,9 +167,8 @@ impl eframe::App for AbaloneApp {
             .show(ctx, |ui| {
                 let nav = match &mut self.state {
                     State::Home => draw_home(ui, self),
-                    State::Browsing => todo!(),
-                    State::OnlineGame => todo!(),
-                    State::OfflineGame(g) => draw_game(ui, g),
+                    State::Online(g) => draw_online_game(ui, &mut self.userdata, g),
+                    State::Offline(g) => draw_game(ui, g),
                 };
 
                 match nav {
@@ -152,11 +182,51 @@ impl eframe::App for AbaloneApp {
 fn draw_home(ui: &mut Ui, app: &mut AbaloneApp) -> Navigation {
     ui.vertical_centered_justified(|ui| {
         if ui.button("Offline game").clicked() {
-            app.state = State::OfflineGame(OfflineGame::default());
+            app.state = State::Offline(OfflineGame::default());
+        }
+    });
+    ui.vertical_centered_justified(|ui| {
+        if ui.button("Online game").clicked() {
+            app.state = State::Online(OnlineGame::new());
         }
     });
 
     Navigation::Stay
+}
+
+fn draw_online_game(ui: &mut Ui, userdata: &mut Userdata, app: &mut OnlineGame) -> Navigation {
+    let mut nav = Navigation::Stay;
+
+    let mut state_lock = app.state.blocking_lock();
+    match &mut *state_lock {
+        ConnectionState::Disconnected => {
+            TextEdit::singleline(&mut userdata.address)
+                .hint_text("Address")
+                .show(ui);
+            TextEdit::singleline(&mut userdata.username)
+                .hint_text("Username")
+                .show(ui);
+            if ui.button("Connect").clicked() {
+                open_connection(
+                    Arc::clone(&app.state),
+                    userdata.clone(),
+                    app.receiver.clone(),
+                );
+            }
+        }
+        ConnectionState::Connecting => {
+            ui.spinner();
+        }
+        ConnectionState::Connected(user) => {
+            ui.label(user.id.to_string());
+            ui.label(user.name.to_string());
+        }
+        ConnectionState::JoiningRoom(user) => todo!(),
+        ConnectionState::LeavingRoom(user, room) => todo!(),
+        ConnectionState::InRoom(user, room) => todo!(),
+    }
+
+    nav
 }
 
 fn draw_game(ui: &mut Ui, app: &mut OfflineGame) -> Navigation {
@@ -255,7 +325,10 @@ fn draw_board(ui: &mut Ui, app: &mut OfflineGame, dim: &Dimensions) -> Navigatio
         true,
         "\u{2630}".to_string(),
     );
-    if resp.clicked() {}
+    if resp.clicked() {
+        // TODO: show proper menu
+        nav = Navigation::Home;
+    }
 
     // redo icon
     let redo_pos = used_screen_rect.center_top() + Vec2::new(2.0 * padding, padding);
@@ -291,7 +364,7 @@ fn draw_board(ui: &mut Ui, app: &mut OfflineGame, dim: &Dimensions) -> Navigatio
     }
 
     // highlight current state
-    match &app.state {
+    match &app.selection {
         SelectionState::NoSelection => (),
         SelectionState::Selection(selection, error) => match error {
             &Some(SelectionError::WrongTurn(p)) => {
@@ -502,7 +575,7 @@ fn check_input(i: &mut InputState, app: &mut OfflineGame, dim: &Dimensions) {
     } else if i.consume_key(Modifiers::COMMAND, Key::Y) {
         redo(app);
     } else if i.consume_key(Modifiers::NONE, Key::Escape) {
-        app.state = SelectionState::NoSelection;
+        app.selection = SelectionState::NoSelection;
     }
 
     if i.pointer.any_click() {
@@ -512,31 +585,31 @@ fn check_input(i: &mut InputState, app: &mut OfflineGame, dim: &Dimensions) {
                 if i.pointer.secondary_released() {
                     // always discard selection if secondary click was used
                     let error = app.game.check_selection([pos; 2]).err();
-                    app.state = SelectionState::Selection([pos; 2], error)
+                    app.selection = SelectionState::Selection([pos; 2], error)
                 } else {
-                    match &app.state {
+                    match &app.selection {
                         SelectionState::NoSelection => {
                             let error = app.game.check_selection([pos; 2]).err();
-                            app.state = SelectionState::Selection([pos; 2], error)
+                            app.selection = SelectionState::Selection([pos; 2], error)
                         }
                         &SelectionState::Selection([start, end], _) => {
                             let sel_vec = end - start;
                             if sel_vec == abalone::Vec2::ZERO {
                                 if pos == start {
-                                    app.state = SelectionState::NoSelection;
+                                    app.selection = SelectionState::NoSelection;
                                 } else {
                                     let selection = [start, pos];
                                     let error = app.game.check_selection(selection).err();
-                                    app.state = SelectionState::Selection(selection, error);
+                                    app.selection = SelectionState::Selection(selection, error);
                                 }
                             } else if pos == start {
                                 let selection = [start + sel_vec.norm(), end];
                                 let error = app.game.check_selection(selection).err();
-                                app.state = SelectionState::Selection(selection, error);
+                                app.selection = SelectionState::Selection(selection, error);
                             } else if pos == end {
                                 let selection = [start, end - sel_vec.norm()];
                                 let error = app.game.check_selection(selection).err();
-                                app.state = SelectionState::Selection(selection, error);
+                                app.selection = SelectionState::Selection(selection, error);
                             } else {
                                 let start_vec = pos - start;
                                 let end_vec = pos - end;
@@ -546,11 +619,11 @@ fn check_input(i: &mut InputState, app: &mut OfflineGame, dim: &Dimensions) {
                                     if start_vec.mag() < end_vec.mag() {
                                         let selection = [pos, end];
                                         let error = app.game.check_selection(selection).err();
-                                        app.state = SelectionState::Selection(selection, error);
+                                        app.selection = SelectionState::Selection(selection, error);
                                     } else {
                                         let selection = [start, pos];
                                         let error = app.game.check_selection(selection).err();
-                                        app.state = SelectionState::Selection(selection, error);
+                                        app.selection = SelectionState::Selection(selection, error);
                                     }
                                 } else {
                                     app.input_errors.push(InputError::CantExtendSelection {
@@ -565,14 +638,14 @@ fn check_input(i: &mut InputState, app: &mut OfflineGame, dim: &Dimensions) {
                 }
 
                 // clear selection only if it's invalid set
-                if let SelectionState::Selection(selection, error) = &app.state {
+                if let SelectionState::Selection(selection, error) = &app.selection {
                     match error {
                         Some(SelectionError::WrongTurn(p)) => {
                             app.input_errors.push(InputError::WrongTurn {
                                 start_secs: i.time,
                                 pos: *p,
                             });
-                            app.state = SelectionState::NoSelection;
+                            app.selection = SelectionState::NoSelection;
                         }
                         Some(SelectionError::InvalidSet) => {
                             let [start, end] = *selection;
@@ -581,13 +654,13 @@ fn check_input(i: &mut InputState, app: &mut OfflineGame, dim: &Dimensions) {
                                 start,
                                 end,
                             });
-                            app.state = SelectionState::NoSelection;
+                            app.selection = SelectionState::NoSelection;
                         }
                         _ => (),
                     }
                 }
             } else {
-                app.state = SelectionState::NoSelection;
+                app.selection = SelectionState::NoSelection;
             }
         }
     }
@@ -606,26 +679,28 @@ fn check_input(i: &mut InputState, app: &mut OfflineGame, dim: &Dimensions) {
                     let end = screen_to_game_pos(dim, current);
                     if abalone::is_in_bounds(start) && abalone::is_in_bounds(end) {
                         let error = app.game.check_selection([start, end]).err();
-                        app.state = SelectionState::Selection([start, end], error);
+                        app.selection = SelectionState::Selection([start, end], error);
                     } else {
-                        app.state = SelectionState::NoSelection;
+                        app.selection = SelectionState::NoSelection;
                     }
                 }
                 DragKind::Direction => {
-                    match &app.state {
+                    match &app.selection {
                         SelectionState::NoSelection => {
                             // use the start position as selection if there is none
                             if abalone::is_in_bounds(start) {
-                                app.state = try_move(&app.game, dim, [start; 2], [origin, current]);
+                                app.selection =
+                                    try_move(&app.game, dim, [start; 2], [origin, current]);
                             }
                         }
                         SelectionState::Selection(selection, error) => {
                             if error.is_none() {
-                                app.state = try_move(&app.game, dim, *selection, [origin, current]);
+                                app.selection =
+                                    try_move(&app.game, dim, *selection, [origin, current]);
                             }
                         }
                         SelectionState::Move(selection, _) => {
-                            app.state = try_move(&app.game, dim, *selection, [origin, current]);
+                            app.selection = try_move(&app.game, dim, *selection, [origin, current]);
                         }
                     }
                 }
@@ -634,16 +709,16 @@ fn check_input(i: &mut InputState, app: &mut OfflineGame, dim: &Dimensions) {
             app.drag = Some((kind, origin, current));
         } else {
             // drag released
-            match &app.state {
+            match &app.selection {
                 SelectionState::NoSelection => (),
                 SelectionState::Selection(_, error) => {
                     // clear invalid selection when drag is released
                     if error.is_some() {
-                        app.state = SelectionState::NoSelection;
+                        app.selection = SelectionState::NoSelection;
                     }
                 }
                 SelectionState::Move(selection, res) => {
-                    app.state = match res {
+                    app.selection = match res {
                         Ok(mov) => {
                             app.game.submit_move(*mov);
                             SelectionState::NoSelection
@@ -668,12 +743,12 @@ fn check_input(i: &mut InputState, app: &mut OfflineGame, dim: &Dimensions) {
 }
 
 fn undo(app: &mut OfflineGame) {
-    app.state = SelectionState::NoSelection;
+    app.selection = SelectionState::NoSelection;
     app.game.undo_move();
 }
 
 fn redo(app: &mut OfflineGame) {
-    app.state = SelectionState::NoSelection;
+    app.selection = SelectionState::NoSelection;
     app.game.redo_move();
 }
 
