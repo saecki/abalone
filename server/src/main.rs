@@ -338,6 +338,12 @@ async fn receiver_task(
                     let dto = dto::Room::from(&*room_lock);
                     send_msg(&p.sender, ServerMsg::Sync(dto)).await;
                 }
+
+                loop {
+                    let Some((transaction_id, transaction)) = room_lock.transactions.drain().next() else { break };
+                    let msg = ServerMsg::JoinRoomNoLongerAllowed(transaction_id);
+                    send_msg(&transaction.player.sender, msg).await;
+                }
             }
             ClientMsg::LeaveRoom => {
                 let Some(r) = &room else {

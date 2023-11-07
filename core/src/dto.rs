@@ -36,6 +36,8 @@ pub enum ServerMsg {
     JoinRoomRequested(TransactionId),
     /// Someone allowed you to join their room.
     JoinRoomAllowed(OpenRoom, TransactionId),
+    /// Someone allowed you to join their room.
+    JoinRoomNoLongerAllowed(TransactionId),
     /// Synchronize game state.
     Sync(Room),
     /// Synchronize game state, but there isn't any.

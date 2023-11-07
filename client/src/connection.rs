@@ -176,6 +176,9 @@ async fn receiver_task(
             ServerMsg::JoinRoomAllowed(room, transaction) => {
                 connection.join_allowed.push((room, transaction));
             }
+            ServerMsg::JoinRoomNoLongerAllowed(transaction) => {
+                connection.join_allowed.retain(|(_, t)| *t != transaction);
+            }
             ServerMsg::Sync(room) => match &mut connection.state {
                 RoomState::Connected { .. } => {
                     connection.state = RoomState::InRoom {
