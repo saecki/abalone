@@ -1,10 +1,10 @@
 use std::sync::Arc;
 
 use abalone_core::dto::{self, ClientMsg, ServerMsg};
-use async_channel::Receiver;
+use async_channel::{Receiver, Sender};
 use futures_util::stream::{SplitSink, SplitStream};
-use futures_util::SinkExt;
 use futures_util::StreamExt;
+use futures_util::{join, SinkExt};
 use tokio::net::TcpStream;
 use tokio::sync::Mutex;
 use tokio_tungstenite::tungstenite::error::Error as TungsteniteError;
@@ -18,25 +18,43 @@ pub enum ConnectionState {
     #[default]
     Disconnected,
     Connecting,
-    Connected(dto::User),
-    JoiningRoom(dto::User),
-    LeavingRoom(dto::User, dto::Room),
-    InRoom(dto::User, dto::Room),
+    Connected(Connection),
+}
+
+pub struct Connection {
+    pub user: dto::User,
+    pub open_rooms: Vec<dto::OpenRoom>,
+    pub join_allowed: Vec<(dto::OpenRoom, dto::TransactionId)>,
+    pub state: RoomState,
+}
+
+pub enum RoomState {
+    Connected {
+        joining: bool,
+    },
+    InRoom {
+        room: dto::Room,
+        join_requests: Vec<dto::TransactionId>,
+        undo_requested: bool,
+        leaving: bool,
+    },
 }
 
 pub(crate) fn open_connection(
     state: Arc<Mutex<ConnectionState>>,
     userdata: Userdata,
+    sender: Sender<ClientMsg>,
     receiver: Receiver<ClientMsg>,
 ) {
     std::thread::spawn(move || {
-        start_websocket(state, userdata, receiver);
+        start_websocket(state, userdata, sender, receiver);
     });
 }
 
 fn start_websocket(
     state: Arc<Mutex<ConnectionState>>,
     userdata: Userdata,
+    session_sender: Sender<ClientMsg>,
     session_receiver: Receiver<ClientMsg>,
 ) {
     *state.blocking_lock() = ConnectionState::Connecting;
@@ -60,10 +78,7 @@ fn start_websocket(
     runtime.block_on(async {
         let connection = tokio_tungstenite::connect_async(url).await;
         let socket = match connection {
-            Ok((socket, resp)) => {
-                dbg!(resp);
-                socket
-            }
+            Ok((socket, _resp)) => socket,
             Err(TungsteniteError::ConnectionClosed) => todo!(),
             Err(e) => todo!(),
         };
@@ -93,17 +108,33 @@ fn start_websocket(
             }
         };
 
-        *state.lock().await = ConnectionState::Connected(user);
+        *state.lock().await = ConnectionState::Connected(Connection {
+            user,
+            open_rooms: Vec::new(),
+            join_allowed: Vec::new(),
+            state: RoomState::Connected { joining: false },
+        });
 
-        tokio::spawn(receiver_task(Arc::clone(&state), socket_receiver));
-        tokio::spawn(sender_task(socket_sender, session_receiver));
+        let receiver_task = tokio::spawn(receiver_task(
+            Arc::clone(&state),
+            socket_receiver,
+            session_sender,
+        ));
+        let sender_task = tokio::spawn(sender_task(socket_sender, session_receiver));
+
+        let (a, b) = join!(receiver_task, sender_task);
+        a.unwrap();
+        b.unwrap();
     });
 }
 
 async fn receiver_task(
     state: Arc<Mutex<ConnectionState>>,
     mut socket: SplitStream<WebSocketStream<MaybeTlsStream<TcpStream>>>,
+    session: Sender<ClientMsg>,
 ) {
+    session.send(ClientMsg::ListRooms).await.unwrap();
+
     'session: loop {
         let Some(msg) = socket.next().await else {
             break 'session;
@@ -125,16 +156,66 @@ async fn receiver_task(
             Err(_) => todo!(),
         };
 
+        let mut state_lock = state.lock().await;
+        let connection = match &mut *state_lock {
+            ConnectionState::Disconnected | ConnectionState::Connecting => break 'session,
+            ConnectionState::Connected(c) => c,
+        };
+
         match msg {
-            ServerMsg::Welcome(_) => todo!("error"),
-            ServerMsg::OpenRooms(_) => todo!(),
-            ServerMsg::JoinRoomRequested(_) => todo!(),
-            ServerMsg::JoinRoomAllowed(_, _) => todo!(),
-            ServerMsg::Sync(_) => todo!(),
-            ServerMsg::SyncEmpty => todo!(),
-            ServerMsg::AppliedMove(_) => todo!(),
-            ServerMsg::UndoRequested => todo!(),
-            ServerMsg::Error(_) => todo!(),
+            ServerMsg::Welcome(_) => todo!(),
+            ServerMsg::OpenRooms(rooms) => {
+                connection.open_rooms = rooms;
+            }
+            ServerMsg::JoinRoomRequested(transaction) => match &mut connection.state {
+                RoomState::Connected { .. } => todo!(),
+                RoomState::InRoom { join_requests, .. } => {
+                    join_requests.push(transaction);
+                }
+            },
+            ServerMsg::JoinRoomAllowed(room, transaction) => {
+                connection.join_allowed.push((room, transaction));
+            }
+            ServerMsg::Sync(room) => match &mut connection.state {
+                RoomState::Connected { .. } => {
+                    connection.state = RoomState::InRoom {
+                        room,
+                        join_requests: Vec::new(),
+                        undo_requested: false,
+                        leaving: false,
+                    };
+                }
+                RoomState::InRoom {
+                    room: r,
+                    undo_requested,
+                    ..
+                } => {
+                    *r = room;
+                    *undo_requested = false;
+                }
+            },
+            ServerMsg::SyncEmpty => {
+                connection.state = RoomState::Connected { joining: false };
+                session.send(ClientMsg::ListRooms).await.unwrap();
+            }
+            ServerMsg::AppliedMove(m) => match &mut connection.state {
+                RoomState::Connected { .. } => todo!(),
+                RoomState::InRoom {
+                    room,
+                    undo_requested,
+                    ..
+                } => {
+                    room.game.submit_move(m);
+                    *undo_requested = false;
+                }
+            },
+            ServerMsg::UndoRequested => match &mut connection.state {
+                RoomState::Connected { .. } => todo!(),
+                RoomState::InRoom { undo_requested, .. } => {
+                    *undo_requested = true;
+                }
+            },
+            ServerMsg::Error(e) => println!("Error: {e}"),
         }
     }
 
@@ -152,8 +233,8 @@ async fn sender_task(
 
         let string = serde_json::to_string(&msg).expect("message should be valid");
         let res = socket.send(Message::Text(string)).await;
-        if let Err(_e) = res {
-            todo!();
+        if let Err(e) = res {
+            todo!("{e}");
         }
     }
 }

@@ -7,8 +7,9 @@ use async_channel::{Receiver, Sender};
 use eframe::{CreationContext, NativeOptions};
 use egui::{
     Align2, CentralPanel, Color32, FontFamily, FontId, Frame, Id, InputState, Key, Modifiers,
-    Painter, Pos2, Rect, Response, Rounding, Sense, Stroke, TextEdit, Ui, Vec2,
+    Painter, Pos2, Rect, Response, Rounding, ScrollArea, Sense, Stroke, TextEdit, Ui, Vec2,
 };
+use egui_extras::{Size, StripBuilder};
 use serde_derive::{Deserialize, Serialize};
 use tokio::sync::Mutex;
 
@@ -210,6 +211,7 @@ fn draw_online_game(ui: &mut Ui, userdata: &mut Userdata, app: &mut OnlineGame) 
                 open_connection(
                     Arc::clone(&app.state),
                     userdata.clone(),
+                    app.sender.clone(),
                     app.receiver.clone(),
                 );
             }
@@ -217,13 +219,84 @@ fn draw_online_game(ui: &mut Ui, userdata: &mut Userdata, app: &mut OnlineGame) 
         ConnectionState::Connecting => {
             ui.spinner();
         }
-        ConnectionState::Connected(user) => {
-            ui.label(user.id.to_string());
-            ui.label(user.name.to_string());
+        ConnectionState::Connected(connection) => {
+            ui.label(connection.user.id.to_string());
+            ui.label(connection.user.name.to_string());
+
+            match &mut connection.state {
+                connection::RoomState::Connected { joining } => {
+                    if ui.button("refresh").clicked() {
+                        let msg = ClientMsg::ListRooms;
+                        app.sender.send_blocking(msg).unwrap();
+                    }
+
+                    ScrollArea::vertical()
+                        .id_source("open_rooms")
+                        .show(ui, |ui| {
+                            ui.heading("Allowed to join");
+                            for (room, transaction) in connection.join_allowed.iter() {
+                                StripBuilder::new(ui)
+                                    .size(Size::relative(0.25))
+                                    .sizes(Size::relative(0.25), 2)
+                                    .size(Size::relative(0.25))
+                                    .horizontal(|mut strip| {
+                                        strip.cell(|ui| {
+                                            ui.label(&room.name);
+                                        });
+                                        for p in room.players.iter() {
+                                            strip.cell(|ui| {
+                                                if let Some(p) = p {
+                                                    ui.label(&p.name);
+                                                }
+                                            });
+                                        }
+                                        strip.cell(|ui| {
+                                            if ui.button("Join").clicked() {
+                                                let msg =
+                                                    ClientMsg::JoinRoom(room.id, *transaction);
+                                                app.sender.send_blocking(msg).unwrap();
+                                            }
+                                        });
+                                    });
+                            }
+
+                            ui.heading("Open rooms");
+                            for room in connection.open_rooms.iter() {
+                                StripBuilder::new(ui)
+                                    .size(Size::relative(0.25))
+                                    .sizes(Size::relative(0.25), 2)
+                                    .size(Size::relative(0.25))
+                                    .horizontal(|mut strip| {
+                                        strip.cell(|ui| {
+                                            ui.label(&room.name);
+                                        });
+                                        for p in room.players.iter() {
+                                            strip.cell(|ui| {
+                                                if let Some(p) = p {
+                                                    ui.label(&p.name);
+                                                }
+                                            });
+                                        }
+                                        strip.cell(|ui| {
+                                            if ui.button("Request to join").clicked() {
+                                                let msg = ClientMsg::RequestJoinRoom(room.id);
+                                                app.sender.send_blocking(msg).unwrap();
+                                            }
+                                        });
+                                    });
+                            }
+                        });
+                }
+                connection::RoomState::InRoom {
+                    room,
+                    join_requests,
+                    undo_requested,
+                    leaving,
+                } => {
+                    todo!();
+                }
+            }
         }
-        ConnectionState::JoiningRoom(user) => todo!(),
-        ConnectionState::LeavingRoom(user, room) => todo!(),
-        ConnectionState::InRoom(user, room) => todo!(),
     }
 
     nav
