@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::net::{Ipv4Addr, SocketAddrV4};
 use std::sync::Arc;
 
 use abalone_core::{dto, Abalone, Color};
@@ -10,6 +11,7 @@ use axum::routing::get;
 use axum::Router;
 use futures_util::stream::{SplitSink, SplitStream};
 use futures_util::{SinkExt, StreamExt};
+use tokio::net::TcpListener;
 use tokio::sync::RwLock;
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
@@ -78,8 +80,9 @@ fn main() {
             .route("/join/:username", get(ws_handler))
             .with_state(state);
 
-        let listener = axum::Server::bind(&"0.0.0.0:8910".parse().unwrap());
-        listener.serve(app.into_make_service()).await.unwrap();
+        let address = SocketAddrV4::new(Ipv4Addr::new(0, 0, 0, 0), 8910);
+        let listener = TcpListener::bind(address).await.unwrap();
+        axum::serve(listener, app).await.unwrap();
     });
 }
 
@@ -340,7 +343,10 @@ async fn receiver_task(
                 }
 
                 loop {
-                    let Some((transaction_id, transaction)) = room_lock.transactions.drain().next() else { break };
+                    let Some((transaction_id, transaction)) = room_lock.transactions.drain().next()
+                    else {
+                        break;
+                    };
                     let msg = ServerMsg::JoinRoomNoLongerAllowed(transaction_id);
                     send_msg(&transaction.player.sender, msg).await;
                 }

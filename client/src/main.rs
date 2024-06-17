@@ -134,6 +134,7 @@ enum InputError {
     },
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum DragKind {
     Selection,
     Direction,
@@ -521,9 +522,6 @@ fn draw_board(ui: &mut Ui, app: &mut OfflineGame, dim: &Dimensions) -> Navigatio
     }
 
     for e in app.input_errors.iter() {
-        // request repaint so the input errors will be cleared
-        ui.ctx().request_repaint();
-
         match *e {
             InputError::WrongTurn { pos, .. } => {
                 highlight_one_square(painter, dim, pos, ERROR_COLOR);
@@ -536,6 +534,10 @@ fn draw_board(ui: &mut Ui, app: &mut OfflineGame, dim: &Dimensions) -> Navigatio
                 highlight_one(painter, dim, pos, ERROR_COLOR);
             }
         };
+    }
+    if !app.input_errors.is_empty() {
+        // request repaint so the input errors will be cleared
+        ui.ctx().request_repaint();
     }
 
     match app.drag {
@@ -737,6 +739,7 @@ fn check_input(i: &mut InputState, app: &mut OfflineGame, dim: &Dimensions) {
             }
         }
     }
+
     if i.pointer.is_decidedly_dragging() {
         if let (Some(origin), Some(current)) = (i.pointer.press_origin(), i.pointer.interact_pos())
         {

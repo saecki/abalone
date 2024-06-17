@@ -5,14 +5,14 @@ edition = "2021"
 
 [dependencies]
 abalone_core = { workspace = true }
-egui = { version = "0.25.0", features = ["persistence"] }
-egui_extras = "0.25.0"
-eframe = { version = "0.25.0", features = ["persistence"] }
+egui = { version = "0.27.2", features = ["persistence"] }
+egui_extras = "0.27.2"
+eframe = { version = "0.27.2", features = ["persistence"] }
 serde = { workspace = true }
 serde_derive = { workspace = true }
 serde_json = { workspace = true }
 tokio = { workspace = true }
-tokio-tungstenite = "0.21.0"
+tokio-tungstenite = "0.23.1"
 futures-util = { workspace = true }
 async-channel = { workspace = true }
 urlencoding = "2.1.3"
