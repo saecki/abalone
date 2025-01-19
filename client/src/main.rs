@@ -30,14 +30,11 @@ const ERROR_COLOR: Color32 = Color32::from_rgb(0xE0, 0x60, 0x40);
 const ERROR_DISPLAY_TIME: f64 = 0.4;
 
 fn main() {
-    let native_options = NativeOptions {
-        follow_system_theme: true,
-        ..Default::default()
-    };
+    let native_options = NativeOptions::default();
     eframe::run_native(
         "abalone",
         native_options,
-        Box::new(|cc| Box::new(AbaloneApp::new(cc))),
+        Box::new(|cc| Ok(Box::new(AbaloneApp::new(cc)))),
     )
     .expect("error running app");
 }

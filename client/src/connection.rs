@@ -95,7 +95,7 @@ fn start_websocket(
             };
             let bytes = match &msg {
                 Message::Text(s) => s.as_bytes(),
-                Message::Binary(v) => v.as_slice(),
+                Message::Binary(v) => v.as_ref(),
                 // ignore
                 Message::Ping(_) | Message::Pong(_) => continue,
                 Message::Close(_) => todo!(),
@@ -145,7 +145,7 @@ async fn receiver_task(
         };
         let bytes = match &msg {
             Message::Text(s) => s.as_bytes(),
-            Message::Binary(v) => v.as_slice(),
+            Message::Binary(v) => v.as_ref(),
             // ignore
             Message::Ping(_) | Message::Pong(_) => continue,
             Message::Close(_) => todo!(),
@@ -235,7 +235,7 @@ async fn sender_task(
         };
 
         let string = serde_json::to_string(&msg).expect("message should be valid");
-        let res = socket.send(Message::Text(string)).await;
+        let res = socket.send(Message::Text(string.into())).await;
         if let Err(e) = res {
             todo!("{e}");
         }
